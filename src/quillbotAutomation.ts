@@ -299,7 +299,10 @@ export class QuillBotAutomation {
 
     await inputArea.evaluate((element, value) => {
       const resolveEditable = (root: Element): HTMLElement | null => {
-        if (root instanceof HTMLInputElement || root instanceof HTMLTextAreaElement) {
+        if (
+          root instanceof HTMLInputElement ||
+          root instanceof HTMLTextAreaElement
+        ) {
           return root;
         }
         if (root instanceof HTMLElement && root.isContentEditable) {
@@ -311,9 +314,9 @@ export class QuillBotAutomation {
         if (contentEditable) {
           return contentEditable;
         }
-        const textControl = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-          "textarea, input"
-        );
+        const textControl = root.querySelector<
+          HTMLInputElement | HTMLTextAreaElement
+        >("textarea, input");
         if (textControl) {
           return textControl;
         }
@@ -326,7 +329,10 @@ export class QuillBotAutomation {
       }
 
       const assign = (content: string): void => {
-        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement
+        ) {
           target.value = content;
         } else {
           target.textContent = content;
