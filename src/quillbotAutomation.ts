@@ -65,7 +65,10 @@ export class QuillBotAutomation {
     this.taskQueue = Promise.resolve();
   }
 
-  async paraphrase(text: string, requestId?: string): Promise<ParaphraseResult> {
+  async paraphrase(
+    text: string,
+    requestId?: string
+  ): Promise<ParaphraseResult> {
     if (!text.trim()) {
       throw new Error("Input text must not be empty.");
     }
@@ -80,7 +83,11 @@ export class QuillBotAutomation {
       this.log(context, "Starting mode 1 flow");
       const firstModeOutput = await this.runFirstMode(page, text, context);
       this.log(context, "Mode 1 complete, starting mode 2 flow");
-      const secondModeOutput = await this.runSecondMode(page, firstModeOutput, context);
+      const secondModeOutput = await this.runSecondMode(
+        page,
+        firstModeOutput,
+        context
+      );
       this.log(context, "Mode 2 complete");
       return {
         firstMode: firstModeOutput,
@@ -143,7 +150,11 @@ export class QuillBotAutomation {
     return this.page;
   }
 
-  private async runFirstMode(page: Page, text: string, context: string): Promise<string> {
+  private async runFirstMode(
+    page: Page,
+    text: string,
+    context: string
+  ): Promise<string> {
     this.log(context, "Mode 1: ensuring tab active");
     await this.ensureMode(page, SELECTORS.firstModeTab);
     this.log(context, "Mode 1: filling input");
@@ -160,7 +171,11 @@ export class QuillBotAutomation {
     return output;
   }
 
-  private async runSecondMode(page: Page, text: string, context: string): Promise<string> {
+  private async runSecondMode(
+    page: Page,
+    text: string,
+    context: string
+  ): Promise<string> {
     this.log(context, "Mode 2: switching tab");
     await this.switchMode(page, SELECTORS.secondModeTab);
     this.log(context, "Mode 2: clearing input");

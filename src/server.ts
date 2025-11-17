@@ -13,7 +13,9 @@ const headless = process.env.HEADLESS !== "false";
 const port = Number(process.env.PORT ?? 3000);
 
 if (!email || !password) {
-  console.error("QUILLBOT_EMAIL and QUILLBOT_PASSWORD must be set in environment variables.");
+  console.error(
+    "QUILLBOT_EMAIL and QUILLBOT_PASSWORD must be set in environment variables."
+  );
   process.exit(1);
 }
 
@@ -41,16 +43,23 @@ app.get("/health", (_req: Request, res: Response) => {
 app.post("/paraphrase", async (req: Request, res: Response) => {
   const { text } = req.body ?? {};
   if (typeof text !== "string" || !text.trim()) {
-    return res.status(400).json({ error: "Field 'text' must be a non-empty string." });
+    return res
+      .status(400)
+      .json({ error: "Field 'text' must be a non-empty string." });
   }
 
   const requestId = randomUUID();
   const startTime = performance.now();
-  console.log(`[${requestId}] Received paraphrase request (length: ${text.length})`);
+  console.log(
+    `[${requestId}] Received paraphrase request (length: ${text.length})`
+  );
 
   try {
     await readyPromise;
-    const result: ParaphraseResult = await automation.paraphrase(text, requestId);
+    const result: ParaphraseResult = await automation.paraphrase(
+      text,
+      requestId
+    );
     const durationMs = Math.round(performance.now() - startTime);
     console.log(`[${requestId}] Paraphrase completed in ${durationMs} ms`);
     res.json({
@@ -63,7 +72,9 @@ app.post("/paraphrase", async (req: Request, res: Response) => {
     const durationMs = Math.round(performance.now() - startTime);
     console.error("Paraphrasing request failed:", error);
     console.error(`[${requestId}] Request failed after ${durationMs} ms`);
-    res.status(500).json({ error: "Failed to process paraphrasing request.", durationMs });
+    res
+      .status(500)
+      .json({ error: "Failed to process paraphrasing request.", durationMs });
   }
 });
 
