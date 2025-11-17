@@ -182,11 +182,11 @@ export class QuillBotAutomation {
     await this.clearInputArea(page);
     this.log(context, "Mode 2: filling input");
     await this.fillInputArea(page, text);
-    await this.delay(1000);
+    await this.delay(500);
     this.log(context, "Mode 2: clicking paraphrase");
     await this.triggerParaphrase(page);
     await this.closePremiumModalIfPresent(page);
-    await this.delay(3000);
+    await this.delay(2000);
     await this.closePremiumModalIfPresent(page);
     this.log(context, "Mode 2: copying result");
     await this.copyResult(page);
@@ -217,14 +217,7 @@ export class QuillBotAutomation {
   }
 
   private async fillInputArea(page: Page, text: string): Promise<void> {
-    const inputArea = await this.waitForAnySelector(
-      page,
-      SELECTORS.inputArea,
-      this.timeout
-    );
-    await inputArea.click({ clickCount: 3 });
-    await page.keyboard.press("Backspace");
-    await inputArea.type(text);
+    await this.setInputAreaContent(page, text);
   }
 
   private async clearInputArea(page: Page): Promise<void> {
@@ -236,13 +229,7 @@ export class QuillBotAutomation {
       );
       await clearButton.click();
     } catch {
-      const inputArea = await this.waitForAnySelector(
-        page,
-        SELECTORS.inputArea,
-        this.timeout
-      );
-      await inputArea.click({ clickCount: 3 });
-      await page.keyboard.press("Backspace");
+      await this.setInputAreaContent(page, "");
     }
   }
 
@@ -288,7 +275,75 @@ export class QuillBotAutomation {
   }
 
   private log(context: string, message: string): void {
-    console.log(`[${new Date().toISOString()}][${context}] ${message}`);
+    console.log(`${message}`);
+  }
+
+  private async setInputAreaContent(page: Page, text: string): Promise<void> {
+    const inputArea = await this.waitForAnySelector(
+      page,
+      SELECTORS.inputArea,
+      this.timeout
+    );
+
+    await inputArea.click({ clickCount: 3 });
+    await page.keyboard.press("Backspace");
+    await inputArea.focus();
+
+    if (text.length === 0) {
+      await inputArea.evaluate((element) => {
+        element.dispatchEvent(new InputEvent("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      return;
+    }
+
+    await inputArea.evaluate((element, value) => {
+      const resolveEditable = (root: Element): HTMLElement | null => {
+        if (root instanceof HTMLInputElement || root instanceof HTMLTextAreaElement) {
+          return root;
+        }
+        if (root instanceof HTMLElement && root.isContentEditable) {
+          return root;
+        }
+        const contentEditable = root.querySelector<HTMLElement>(
+          "[contenteditable='true']"
+        );
+        if (contentEditable) {
+          return contentEditable;
+        }
+        const textControl = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+          "textarea, input"
+        );
+        if (textControl) {
+          return textControl;
+        }
+        return root instanceof HTMLElement ? root : null;
+      };
+
+      const target = resolveEditable(element);
+      if (!target) {
+        return;
+      }
+
+      const assign = (content: string): void => {
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+          target.value = content;
+        } else {
+          target.textContent = content;
+        }
+      };
+
+      assign(value);
+
+      target.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertFromPaste",
+          data: value,
+        })
+      );
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+    }, text);
   }
 
   private async waitForAnySelector(
