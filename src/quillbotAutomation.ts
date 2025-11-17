@@ -24,6 +24,7 @@ const SELECTORS = {
   copyButton: [
     "#pphr-view-editor-box > div > div.Pane.vertical.Pane2 > div > div.MuiBox-root.css-3wazsk > div > div > div > span:nth-child(5) > button",
   ],
+  loadingIndicator: ["#mui-2401 > div", ".MuiLoadingButton-loadingIndicator"],
 };
 
 export interface ParaphraseResult {
@@ -163,6 +164,10 @@ export class QuillBotAutomation {
     this.log(context, "Mode 1: clicking paraphrase");
     await this.triggerParaphrase(page);
     await this.closePremiumModalIfPresent(page);
+    await this.waitForLoaderToDisappear(page).catch(async () => {
+      this.log(context, "Mode 1: loader wait timed out, using fallback delay");
+      await this.delay(1500);
+    });
     this.log(context, "Mode 1: copying result");
     await this.copyResult(page);
     await this.closePremiumModalIfPresent(page);
@@ -186,13 +191,14 @@ export class QuillBotAutomation {
     this.log(context, "Mode 2: clicking paraphrase");
     await this.triggerParaphrase(page);
     await this.closePremiumModalIfPresent(page);
-    await this.delay(2000);
-    await this.closePremiumModalIfPresent(page);
+    await this.delay(6000);
     this.log(context, "Mode 2: copying result");
     await this.copyResult(page);
     await this.closePremiumModalIfPresent(page);
     const output = await this.readClipboard(page);
     this.log(context, "Mode 2: clipboard captured");
+
+    await this.closePremiumModalIfPresent(page);
     return output;
   }
 
@@ -276,6 +282,18 @@ export class QuillBotAutomation {
 
   private log(context: string, message: string): void {
     console.log(`${message}`);
+  }
+
+  private async waitForLoaderToDisappear(
+    page: Page,
+    timeout = this.timeout
+  ): Promise<void> {
+    await page.waitForFunction(
+      (selectors: string[]) =>
+        selectors.every((selector) => !document.querySelector(selector)),
+      { timeout: 12000 },
+      SELECTORS.loadingIndicator
+    );
   }
 
   private async setInputAreaContent(page: Page, text: string): Promise<void> {
