@@ -112,8 +112,18 @@ export class QuillBotAutomation {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--disable-gpu'
+          '--disable-gpu',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-web-security',
+          '--disable-features=VizDisplayCompositor',
+          '--single-process',
+          '--no-default-browser-check',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--dns-prefetch-disable'
         ],
+        protocolTimeout: 60000,
       });
       const page = await this.browser.newPage();
       this.page = page;
@@ -126,7 +136,29 @@ export class QuillBotAutomation {
       ]);
 
       await page.setViewport({ width: 1920, height: 1080 });
-      await page.goto(LOGIN_URL, { waitUntil: "networkidle2" });
+      
+      // Retry navigation with exponential backoff
+      let loginSuccess = false;
+      let retries = 0;
+      const maxRetries = 3;
+      
+      while (!loginSuccess && retries < maxRetries) {
+        try {
+          await page.goto(LOGIN_URL, { 
+            waitUntil: "networkidle2",
+            timeout: 60000 
+          });
+          loginSuccess = true;
+        } catch (error) {
+          retries++;
+          if (retries >= maxRetries) {
+            throw error;
+          }
+          console.log(`Navigation failed, retry ${retries}/${maxRetries}...`);
+          await this.delay(2000 * retries); // Exponential backoff
+        }
+      }
+      
       await page.evaluate(() => {
         localStorage.setItem("DONT_SHOW_DELETE_REMINDER_AGAIN", "true");
       });
@@ -144,7 +176,27 @@ export class QuillBotAutomation {
 
       await loginButton.click();
 
-      await page.goto(PARAPHRASER_URL, { waitUntil: "networkidle2" });
+      // Retry paraphraser navigation with exponential backoff
+      loginSuccess = false;
+      retries = 0;
+      
+      while (!loginSuccess && retries < maxRetries) {
+        try {
+          await page.goto(PARAPHRASER_URL, { 
+            waitUntil: "networkidle2",
+            timeout: 60000 
+          });
+          loginSuccess = true;
+        } catch (error) {
+          retries++;
+          if (retries >= maxRetries) {
+            throw error;
+          }
+          console.log(`Paraphraser page navigation failed, retry ${retries}/${maxRetries}...`);
+          await this.delay(2000 * retries);
+        }
+      }
+      
       await this.closePremiumModalIfPresent(page);
       await this.ensureMode(page, SELECTORS.firstModeTab);
     } catch (error) {

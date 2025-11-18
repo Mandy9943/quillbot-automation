@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: quillbot-automation
     ports:
-      - "3090:3000"
+      - "3000:3000"
     environment:
       - QUILLBOT_EMAIL=${QUILLBOT_EMAIL}
       - QUILLBOT_PASSWORD=${QUILLBOT_PASSWORD}
@@ -17,6 +17,11 @@ services:
     # Security options for running Chrome in container
     cap_add:
       - SYS_ADMIN
+    # DNS configuration for better connectivity
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     # Healthcheck
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
