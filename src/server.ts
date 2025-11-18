@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import cors from "cors";
 import dotenv from "dotenv";
 import express, { Request, Response } from "express";
 import { performance } from "node:perf_hooks";
@@ -34,6 +35,7 @@ const readyPromise = automation
   });
 
 const app = express();
+app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req: Request, res: Response) => {
