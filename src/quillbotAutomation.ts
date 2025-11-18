@@ -231,7 +231,8 @@ export class QuillBotAutomation {
       this.log(context, "Mode 1: loader wait timed out, using fallback delay");
       await this.delay(1500);
     });
-    await this.delay(6000);
+    this.log(context, "Mode 1: loader disappeared, waiting extra time");
+    await this.delay(10000);
     this.log(context, "Mode 1: copying result");
     await this.copyResult(page);
     await this.closePremiumModalIfPresent(page);
