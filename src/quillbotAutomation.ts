@@ -106,22 +106,22 @@ export class QuillBotAutomation {
       this.browser = await puppeteer.launch({
         headless: this.options.headless ?? true,
         args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--disable-gpu',
-          '--disable-features=IsolateOrigins,site-per-process',
-          '--disable-blink-features=AutomationControlled',
-          '--disable-web-security',
-          '--disable-features=VizDisplayCompositor',
-          '--single-process',
-          '--no-default-browser-check',
-          '--disable-extensions',
-          '--disable-background-networking',
-          '--dns-prefetch-disable'
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--no-first-run",
+          "--no-zygote",
+          "--disable-gpu",
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--disable-blink-features=AutomationControlled",
+          "--disable-web-security",
+          "--disable-features=VizDisplayCompositor",
+          "--single-process",
+          "--no-default-browser-check",
+          "--disable-extensions",
+          "--disable-background-networking",
+          "--dns-prefetch-disable",
         ],
         protocolTimeout: 60000,
       });
@@ -136,17 +136,17 @@ export class QuillBotAutomation {
       ]);
 
       await page.setViewport({ width: 1920, height: 1080 });
-      
+
       // Retry navigation with exponential backoff
       let loginSuccess = false;
       let retries = 0;
       const maxRetries = 3;
-      
+
       while (!loginSuccess && retries < maxRetries) {
         try {
-          await page.goto(LOGIN_URL, { 
+          await page.goto(LOGIN_URL, {
             waitUntil: "networkidle2",
-            timeout: 60000 
+            timeout: 60000,
           });
           loginSuccess = true;
         } catch (error) {
@@ -158,7 +158,7 @@ export class QuillBotAutomation {
           await this.delay(2000 * retries); // Exponential backoff
         }
       }
-      
+
       await page.evaluate(() => {
         localStorage.setItem("DONT_SHOW_DELETE_REMINDER_AGAIN", "true");
       });
@@ -179,12 +179,12 @@ export class QuillBotAutomation {
       // Retry paraphraser navigation with exponential backoff
       loginSuccess = false;
       retries = 0;
-      
+
       while (!loginSuccess && retries < maxRetries) {
         try {
-          await page.goto(PARAPHRASER_URL, { 
+          await page.goto(PARAPHRASER_URL, {
             waitUntil: "networkidle2",
-            timeout: 60000 
+            timeout: 60000,
           });
           loginSuccess = true;
         } catch (error) {
@@ -192,11 +192,13 @@ export class QuillBotAutomation {
           if (retries >= maxRetries) {
             throw error;
           }
-          console.log(`Paraphraser page navigation failed, retry ${retries}/${maxRetries}...`);
+          console.log(
+            `Paraphraser page navigation failed, retry ${retries}/${maxRetries}...`
+          );
           await this.delay(2000 * retries);
         }
       }
-      
+
       await this.closePremiumModalIfPresent(page);
       await this.ensureMode(page, SELECTORS.firstModeTab);
     } catch (error) {
@@ -229,6 +231,7 @@ export class QuillBotAutomation {
       this.log(context, "Mode 1: loader wait timed out, using fallback delay");
       await this.delay(1500);
     });
+    await this.delay(6000);
     this.log(context, "Mode 1: copying result");
     await this.copyResult(page);
     await this.closePremiumModalIfPresent(page);
