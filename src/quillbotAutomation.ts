@@ -45,7 +45,7 @@ export class QuillBotAutomation {
   private readonly timeout: number;
 
   constructor(private readonly options: QuillBotAutomationOptions) {
-    this.timeout = options.timeout ?? 10000;
+    this.timeout = options.timeout ?? 30000;
   }
 
   async init(): Promise<void> {
