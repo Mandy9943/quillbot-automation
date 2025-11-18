@@ -21,9 +21,7 @@ const SELECTORS = {
   paraphraseButton: [
     "#controlledInputBoxContainer > div.MuiBox-root.css-1a43h92 > div > div.MuiBox-root.css-n0jqrr > span > div > button",
   ],
-  copyButton: [
-    "#pphr-view-editor-box > div > div.Pane.vertical.Pane2 > div > div.MuiBox-root.css-3wazsk > div > div > div > span:nth-child(5) > button",
-  ],
+  copyButton: ['[data-testid="pphr/output_footer/copy_text_button"]'],
   loadingIndicator: ["#mui-2401 > div", ".MuiLoadingButton-loadingIndicator"],
 };
 
