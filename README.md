@@ -38,18 +38,64 @@ This project exposes an Express API that keeps a single puppeteer-driven QuillBo
 
 ## Running
 
-- Development (ts-node):
+### Local Development (ts-node)
 
-  ```bash
-  npm run dev
-  ```
+```bash
+npm run dev
+```
 
-- Production build + start:
+### Production Build + Start
 
-  ```bash
-  npm run build
-  npm start
-  ```
+```bash
+npm run build
+npm start
+```
+
+### Docker (Recommended for Production)
+
+The application is fully containerized with all Chromium dependencies included.
+
+1. **Build and run with Docker Compose:**
+
+   ```bash
+   docker-compose up --build
+   ```
+
+   The API will be available at `http://localhost:3000`.
+
+2. **Or build and run manually:**
+
+   ```bash
+   # Build the image
+   docker build -t quillbot-automation .
+   
+   # Run the container
+   docker run -d \
+     -p 3000:3000 \
+     -e QUILLBOT_EMAIL="your_email@example.com" \
+     -e QUILLBOT_PASSWORD="your_password" \
+     -e HEADLESS=true \
+     --shm-size=2gb \
+     --cap-add=SYS_ADMIN \
+     --name quillbot-automation \
+     quillbot-automation
+   ```
+
+3. **Check logs:**
+
+   ```bash
+   docker logs -f quillbot-automation
+   ```
+
+4. **Stop the container:**
+
+   ```bash
+   docker-compose down
+   # or
+   docker stop quillbot-automation
+   ```
+
+**Note:** The Docker image includes Chromium and all required system libraries, ensuring consistent behavior across environments (local, cloud, CI/CD).
 
 ## API
 
