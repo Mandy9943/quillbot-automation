@@ -397,7 +397,8 @@ export class QuillBotAutomation {
     const output = await this.readClipboard(page);
     this.log(context, "Mode 2: clipboard captured");
 
-    await this.closePremiumModalIfPresent(page);
+    this.resetPageState(page, context);
+
     return output;
   }
 
@@ -566,6 +567,18 @@ export class QuillBotAutomation {
       await this.delay(200);
     } catch {
       // Ignore if modal is not present.
+    }
+  }
+
+  private async resetPageState(page: Page, context: string): Promise<void> {
+    this.log(context, "Resetting page state after Mode 2");
+    try {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await this.closePremiumModalIfPresent(page);
+      await this.handleCookieConsent(page);
+      await this.ensureMode(page, SELECTORS.firstModeTab);
+    } catch (error) {
+      console.error("Failed to reset page state:", error);
     }
   }
 
