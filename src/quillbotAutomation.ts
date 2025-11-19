@@ -340,7 +340,7 @@ export class QuillBotAutomation {
     context: string
   ): Promise<string> {
     this.log(context, "Mode 2: Reloading page to ensure fresh state");
-    await page.reload({ ignoreCache: false, waitUntil: "domcontentloaded" });
+    await page.reload({ ignoreCache: false, waitUntil: "networkidle2" });
 
     await this.closePremiumModalIfPresent(page);
     await this.handleCookieConsent(page);
