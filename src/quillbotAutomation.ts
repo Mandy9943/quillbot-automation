@@ -230,26 +230,40 @@ export class QuillBotAutomation {
     await this.fillInputArea(page, text);
     await this.closePremiumModalIfPresent(page);
     this.log(context, "Mode 1: clicking paraphrase");
-    await this.triggerParaphrase(page);
 
-    // Wait for either loader or result to appear to confirm click worked
-    try {
-      await page.waitForFunction(
-        (loadingSelectors, copySelectors) => {
-          const isLoading = loadingSelectors.some((s) =>
-            document.querySelector(s)
-          );
-          const isDone = copySelectors.some((s) => document.querySelector(s));
-          return isLoading || isDone;
-        },
-        { timeout: 5000 },
-        SELECTORS.loadingIndicator,
-        SELECTORS.copyButton
-      );
-    } catch {
+    let clickSuccess = false;
+    for (let i = 0; i < 3; i++) {
+      await this.triggerParaphrase(page);
+
+      // Wait for either loader or result to appear to confirm click worked
+      try {
+        await page.waitForFunction(
+          (loadingSelectors, copySelectors) => {
+            const isLoading = loadingSelectors.some((s) =>
+              document.querySelector(s)
+            );
+            const isDone = copySelectors.some((s) => document.querySelector(s));
+            return isLoading || isDone;
+          },
+          { timeout: 4000 },
+          SELECTORS.loadingIndicator,
+          SELECTORS.copyButton
+        );
+        clickSuccess = true;
+        break;
+      } catch {
+        this.log(
+          context,
+          `Mode 1: Click attempt ${i + 1} failed to trigger action, retrying...`
+        );
+        await this.delay(1000);
+      }
+    }
+
+    if (!clickSuccess) {
       this.log(
         context,
-        "Mode 1: Warning - No loader or result detected after click"
+        "Mode 1: Warning - No loader or result detected after multiple click attempts"
       );
     }
 
@@ -377,10 +391,21 @@ export class QuillBotAutomation {
       await this.delay(500);
     }
 
-    // Try native click first
-    try {
-      await button.click();
-    } catch (e) {
+    // Try to scroll into view
+    await button.evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await this.delay(500);
+
+    // Try mouse click (most reliable for avoiding detection/overlays)
+    const box = await button.boundingBox();
+    if (box) {
+      console.log(`Clicking button at ${box.x}, ${box.y}`);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await this.delay(100);
+      await page.mouse.down();
+      await this.delay(100);
+      await page.mouse.up();
+    } else {
+      // Fallback
       console.log("Native click failed, trying JS click");
       await page.evaluate((el) => (el as HTMLElement).click(), button);
     }
