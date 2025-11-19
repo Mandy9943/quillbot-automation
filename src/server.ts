@@ -42,6 +42,18 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", ready: isReady });
 });
 
+app.get("/debug/screenshot", (_req: Request, res: Response) => {
+  const path = require("path");
+  const fs = require("fs");
+  const screenshotPath = path.resolve("error_screenshot.png");
+
+  if (fs.existsSync(screenshotPath)) {
+    res.sendFile(screenshotPath);
+  } else {
+    res.status(404).send("No error screenshot available");
+  }
+});
+
 app.post("/paraphrase", async (req: Request, res: Response) => {
   const { text } = req.body ?? {};
   if (typeof text !== "string" || !text.trim()) {

@@ -23,6 +23,11 @@ const SELECTORS = {
   ],
   copyButton: ['[data-testid="pphr/output_footer/copy_text_button"]'],
   loadingIndicator: ["#mui-2401 > div", ".MuiLoadingButton-loadingIndicator"],
+  cookieConsent: [
+    "#onetrust-accept-btn-handler",
+    "#onetrust-reject-all-handler",
+    ".onetrust-close-btn-handler",
+  ],
 };
 
 export interface ParaphraseResult {
@@ -205,6 +210,7 @@ export class QuillBotAutomation {
       }
 
       await this.closePremiumModalIfPresent(page);
+      await this.handleCookieConsent(page);
       await this.ensureMode(page, SELECTORS.firstModeTab);
     } catch (error) {
       await this.dispose();
@@ -229,6 +235,7 @@ export class QuillBotAutomation {
     this.log(context, "Mode 1: filling input");
     await this.fillInputArea(page, text);
     await this.closePremiumModalIfPresent(page);
+    await this.handleCookieConsent(page);
     this.log(context, "Mode 1: clicking paraphrase");
 
     let clickSuccess = false;
@@ -268,8 +275,11 @@ export class QuillBotAutomation {
       try {
         const path = "error_screenshot.png";
         await page.screenshot({ path, fullPage: true });
-        this.log(context, `Screenshot saved to ${path} - please check for overlays/modals`);
-        
+        this.log(
+          context,
+          `Screenshot saved to ${path} - please check for overlays/modals`
+        );
+
         // Also dump the HTML to see if there are hidden modals
         const html = await page.content();
         console.log("Page HTML length:", html.length);
@@ -411,17 +421,25 @@ export class QuillBotAutomation {
     if (box) {
       const x = box.x + box.width / 2;
       const y = box.y + box.height / 2;
-      
+
       console.log(`Clicking button at ${x}, ${y}`);
 
       // Check what's actually at this position
-      const elementAtPoint = await page.evaluate((x, y) => {
-        const el = document.elementFromPoint(x, y);
-        return el ? { tag: el.tagName, class: el.className, id: el.id } : null;
-      }, x, y);
-      
+      const elementAtPoint = await page.evaluate(
+        (x, y) => {
+          const el = document.elementFromPoint(x, y);
+          return el
+            ? { tag: el.tagName, class: el.className, id: el.id }
+            : null;
+        },
+        x,
+        y
+      );
+
       if (elementAtPoint) {
-        console.log(`Element at click position: ${elementAtPoint.tag}.${elementAtPoint.class}#${elementAtPoint.id}`);
+        console.log(
+          `Element at click position: ${elementAtPoint.tag}.${elementAtPoint.class}#${elementAtPoint.id}`
+        );
       }
 
       await page.mouse.move(x, y);
@@ -429,18 +447,17 @@ export class QuillBotAutomation {
       await page.mouse.down();
       await this.delay(100);
       await page.mouse.up();
-      
+
       // Fallback: Aggressive JS click if mouse didn't work (React sometimes needs this)
       await this.delay(200);
       await page.evaluate((el) => {
-        const event = new MouseEvent('click', {
+        const event = new MouseEvent("click", {
           view: window,
           bubbles: true,
-          cancelable: true
+          cancelable: true,
         });
         el.dispatchEvent(event);
       }, button);
-      
     } else {
       // Fallback
       console.log("Native click failed, trying JS click");
@@ -473,6 +490,21 @@ export class QuillBotAutomation {
       await this.delay(200);
     } catch {
       // Ignore if modal is not present.
+    }
+  }
+
+  private async handleCookieConsent(page: Page): Promise<void> {
+    try {
+      const consentButton = await this.waitForAnySelector(
+        page,
+        SELECTORS.cookieConsent,
+        2000
+      );
+      console.log("Cookie consent banner detected, clicking accept/close...");
+      await consentButton.click();
+      await this.delay(1000); // Wait for banner to animate out
+    } catch {
+      // Ignore if cookie banner is not present
     }
   }
 
