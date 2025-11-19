@@ -176,6 +176,9 @@ export class QuillBotAutomation {
         localStorage.setItem("DONT_SHOW_DELETE_REMINDER_AGAIN", "true");
       });
 
+      // Handle cookie consent BEFORE login attempt
+      await this.handleCookieConsent(page);
+
       await this.typeIntoField(page, SELECTORS.email, this.options.email);
       await this.typeIntoField(page, SELECTORS.password, this.options.password);
 
@@ -186,6 +189,9 @@ export class QuillBotAutomation {
       );
 
       console.log("loginButton");
+
+      // Ensure cookie banner is gone before clicking login
+      await this.handleCookieConsent(page);
 
       await loginButton.click();
 
