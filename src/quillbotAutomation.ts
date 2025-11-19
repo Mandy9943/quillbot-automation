@@ -265,6 +265,17 @@ export class QuillBotAutomation {
         context,
         "Mode 1: Warning - No loader or result detected after multiple click attempts"
       );
+      try {
+        const path = "error_screenshot.png";
+        await page.screenshot({ path, fullPage: true });
+        this.log(context, `Screenshot saved to ${path} - please check for overlays/modals`);
+        
+        // Also dump the HTML to see if there are hidden modals
+        const html = await page.content();
+        console.log("Page HTML length:", html.length);
+      } catch (e) {
+        console.error("Failed to capture debug info:", e);
+      }
     }
 
     await this.closePremiumModalIfPresent(page);
@@ -398,12 +409,38 @@ export class QuillBotAutomation {
     // Try mouse click (most reliable for avoiding detection/overlays)
     const box = await button.boundingBox();
     if (box) {
-      console.log(`Clicking button at ${box.x}, ${box.y}`);
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      
+      console.log(`Clicking button at ${x}, ${y}`);
+
+      // Check what's actually at this position
+      const elementAtPoint = await page.evaluate((x, y) => {
+        const el = document.elementFromPoint(x, y);
+        return el ? { tag: el.tagName, class: el.className, id: el.id } : null;
+      }, x, y);
+      
+      if (elementAtPoint) {
+        console.log(`Element at click position: ${elementAtPoint.tag}.${elementAtPoint.class}#${elementAtPoint.id}`);
+      }
+
+      await page.mouse.move(x, y);
       await this.delay(100);
       await page.mouse.down();
       await this.delay(100);
       await page.mouse.up();
+      
+      // Fallback: Aggressive JS click if mouse didn't work (React sometimes needs this)
+      await this.delay(200);
+      await page.evaluate((el) => {
+        const event = new MouseEvent('click', {
+          view: window,
+          bubbles: true,
+          cancelable: true
+        });
+        el.dispatchEvent(event);
+      }, button);
+      
     } else {
       // Fallback
       console.log("Native click failed, trying JS click");
