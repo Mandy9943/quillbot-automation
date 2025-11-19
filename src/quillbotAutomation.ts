@@ -48,6 +48,7 @@ export class QuillBotAutomation {
   private readyPromise?: Promise<void>;
   private taskQueue: Promise<unknown> = Promise.resolve();
   private readonly timeout: number;
+  private cookieConsentHandled = false;
 
   constructor(private readonly options: QuillBotAutomationOptions) {
     this.timeout = options.timeout ?? 30000;
@@ -209,16 +210,6 @@ export class QuillBotAutomation {
         );
       }
 
-      // Take a screenshot after login attempt to debug potential toasts/errors
-      const loginTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      await page.screenshot({
-        path: `debug_login_${loginTimestamp}.png` as any,
-        fullPage: true,
-      });
-      console.log(
-        `Login attempt screenshot saved to debug_login_${loginTimestamp}.png`
-      );
-
       // Check if we are still on login page or redirected to Facebook/Google
       const currentUrl = page.url();
       if (
@@ -319,7 +310,7 @@ export class QuillBotAutomation {
           context,
           `Mode 1: Click attempt ${i + 1} failed to trigger action, retrying...`
         );
-        await this.delay(1000);
+        await this.delay(500);
       }
     }
 
@@ -328,20 +319,6 @@ export class QuillBotAutomation {
         context,
         "Mode 1: Warning - No loader or result detected after multiple click attempts"
       );
-      try {
-        const path = "error_screenshot.png";
-        await page.screenshot({ path, fullPage: true });
-        this.log(
-          context,
-          `Screenshot saved to ${path} - please check for overlays/modals`
-        );
-
-        // Also dump the HTML to see if there are hidden modals
-        const html = await page.content();
-        console.log("Page HTML length:", html.length);
-      } catch (e) {
-        console.error("Failed to capture debug info:", e);
-      }
     }
 
     await this.closePremiumModalIfPresent(page);
@@ -399,7 +376,7 @@ export class QuillBotAutomation {
         break;
       } catch {
         this.log(context, `Mode 2: Click attempt ${i + 1} failed, retrying...`);
-        await this.delay(1000);
+        await this.delay(500);
       }
     }
 
@@ -432,8 +409,8 @@ export class QuillBotAutomation {
     const field = await this.waitForAnySelector(page, selectors, this.timeout);
     await field.click({ clickCount: 3 });
     await page.keyboard.press("Backspace");
-    await this.delay(100);
-    await field.type(value, { delay: 50 }); // Add typing delay to mimic human
+    await this.delay(50);
+    await field.type(value, { delay: 10 }); // Add typing delay to mimic human
   }
 
   private async ensureMode(page: Page, selectors: string[]): Promise<void> {
@@ -524,13 +501,13 @@ export class QuillBotAutomation {
       // console.log(`Clicking button at ${x}, ${y}`);
 
       await page.mouse.move(x, y);
-      await this.delay(50); // Reduced from 100ms
+      await this.delay(10); // Reduced from 50ms
       await page.mouse.down();
-      await this.delay(50); // Reduced from 100ms
+      await this.delay(10); // Reduced from 50ms
       await page.mouse.up();
 
       // Fallback: Aggressive JS click if mouse didn't work (React sometimes needs this)
-      await this.delay(100); // Reduced from 200ms
+      await this.delay(50); // Reduced from 100ms
       await page.evaluate((el) => {
         const event = new MouseEvent("click", {
           view: window,
@@ -565,7 +542,7 @@ export class QuillBotAutomation {
       const closeButton = await this.waitForAnySelector(
         page,
         SELECTORS.closePremiumModal,
-        1500
+        500
       );
       await closeButton.click();
       await this.delay(200);
@@ -575,21 +552,24 @@ export class QuillBotAutomation {
   }
 
   private async handleCookieConsent(page: Page): Promise<void> {
+    if (this.cookieConsentHandled) return;
+
     try {
       // Reduced timeout to check quickly
       const consentButton = await this.waitForAnySelector(
         page,
         SELECTORS.cookieConsent,
-        1000
+        500
       );
       console.log("Cookie consent banner detected, clicking accept/close...");
       await consentButton.click();
+      this.cookieConsentHandled = true;
 
       // Wait for banner to disappear instead of fixed delay
       try {
         await page.waitForFunction(
           (selectors) => !selectors.some((s) => document.querySelector(s)),
-          { timeout: 2000 },
+          { timeout: 1000 },
           SELECTORS.cookieConsent
         );
       } catch {
@@ -713,15 +693,6 @@ export class QuillBotAutomation {
 
     // If we failed to find any selector, take a screenshot for debugging
     try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const path = `error_selector_${timestamp}.png`;
-      await page.screenshot({ path: path as any, fullPage: true });
-      console.log(
-        `Failed to find selectors: ${selectors.join(
-          ", "
-        )}. Screenshot saved to ${path}`
-      );
-
       // Also log current URL and title
       const url = page.url();
       const title = await page.title();
