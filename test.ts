@@ -41,6 +41,10 @@ const waitForAnySelector = async (
       width: 1920,
       height: 1080,
     });
+    await targetPage.setExtraHTTPHeaders({
+      Referer: "https://quillbot.com/",
+      Origin: "https://quillbot.com",
+    });
   }
   {
     const targetPage = page;

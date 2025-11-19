@@ -137,6 +137,11 @@ export class QuillBotAutomation {
 
       await page.setViewport({ width: 1920, height: 1080 });
 
+      await page.setExtraHTTPHeaders({
+        Referer: "https://quillbot.com/",
+        Origin: "https://quillbot.com",
+      });
+
       // Retry navigation with exponential backoff
       let loginSuccess = false;
       let retries = 0;
@@ -226,13 +231,15 @@ export class QuillBotAutomation {
     await this.closePremiumModalIfPresent(page);
     this.log(context, "Mode 1: clicking paraphrase");
     await this.triggerParaphrase(page);
-    
+
     // Wait for either loader or result to appear to confirm click worked
     try {
       await page.waitForFunction(
         (loadingSelectors, copySelectors) => {
-          const isLoading = loadingSelectors.some(s => document.querySelector(s));
-          const isDone = copySelectors.some(s => document.querySelector(s));
+          const isLoading = loadingSelectors.some((s) =>
+            document.querySelector(s)
+          );
+          const isDone = copySelectors.some((s) => document.querySelector(s));
           return isLoading || isDone;
         },
         { timeout: 5000 },
@@ -240,7 +247,10 @@ export class QuillBotAutomation {
         SELECTORS.copyButton
       );
     } catch {
-      this.log(context, "Mode 1: Warning - No loader or result detected after click");
+      this.log(
+        context,
+        "Mode 1: Warning - No loader or result detected after click"
+      );
     }
 
     await this.closePremiumModalIfPresent(page);
@@ -309,7 +319,7 @@ export class QuillBotAutomation {
       const el = document.querySelector(selector);
       return el?.textContent || (el as HTMLInputElement)?.value || "";
     }, SELECTORS.inputArea[0]);
-    
+
     if (!content && text.length > 0) {
       console.log("Warning: Input area seems empty after fill attempt");
       // Retry once
@@ -336,10 +346,44 @@ export class QuillBotAutomation {
       SELECTORS.paraphraseButton,
       this.timeout
     );
-    // Use evaluate to click for better reliability
-    await page.evaluate((el) => {
-      if (el instanceof HTMLElement) el.click();
-    }, button);
+
+    // Log what we found to help debugging
+    const buttonState = await page.evaluate(
+      (el) => ({
+        html: el.outerHTML.substring(0, 150),
+        disabled:
+          el.hasAttribute("disabled") ||
+          el.getAttribute("aria-disabled") === "true",
+        visible: (el as HTMLElement).offsetParent !== null,
+      }),
+      button
+    );
+
+    console.log(
+      `Paraphrase button found: disabled=${buttonState.disabled}, visible=${buttonState.visible}`
+    );
+
+    if (buttonState.disabled) {
+      console.log("Button is disabled! Attempting to wake up input...");
+      // Try to trigger input events by typing a space and backspace
+      const input = await this.waitForAnySelector(
+        page,
+        SELECTORS.inputArea,
+        2000
+      );
+      await input.focus();
+      await page.keyboard.type(" ");
+      await page.keyboard.press("Backspace");
+      await this.delay(500);
+    }
+
+    // Try native click first
+    try {
+      await button.click();
+    } catch (e) {
+      console.log("Native click failed, trying JS click");
+      await page.evaluate((el) => (el as HTMLElement).click(), button);
+    }
   }
 
   private async copyResult(page: Page): Promise<void> {
