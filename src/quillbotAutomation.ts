@@ -306,17 +306,58 @@ export class QuillBotAutomation {
     text: string,
     context: string
   ): Promise<string> {
+    this.log(context, "Mode 2: Reloading page to ensure fresh state");
+    await page.reload({ ignoreCache: false, waitUntil: "domcontentloaded" });
+
+    await this.closePremiumModalIfPresent(page);
+    await this.handleCookieConsent(page);
+
     this.log(context, "Mode 2: switching tab");
     await this.switchMode(page, SELECTORS.secondModeTab);
-    this.log(context, "Mode 2: clearing input");
-    await this.clearInputArea(page);
+
     this.log(context, "Mode 2: filling input");
     await this.fillInputArea(page, text);
+
     await this.delay(500);
     this.log(context, "Mode 2: clicking paraphrase");
-    await this.triggerParaphrase(page);
+
+    // Use the same robust click logic as Mode 1
+    let clickSuccess = false;
+    for (let i = 0; i < 3; i++) {
+      await this.triggerParaphrase(page);
+
+      try {
+        await page.waitForFunction(
+          (loadingSelectors, copySelectors) => {
+            const isLoading = loadingSelectors.some((s) =>
+              document.querySelector(s)
+            );
+            const isDone = copySelectors.some((s) => document.querySelector(s));
+            return isLoading || isDone;
+          },
+          { timeout: 4000 },
+          SELECTORS.loadingIndicator,
+          SELECTORS.copyButton
+        );
+        clickSuccess = true;
+        break;
+      } catch {
+        this.log(context, `Mode 2: Click attempt ${i + 1} failed, retrying...`);
+        await this.delay(1000);
+      }
+    }
+
+    if (!clickSuccess) {
+      this.log(context, "Mode 2: Warning - No loader/result detected");
+    }
+
     await this.closePremiumModalIfPresent(page);
-    await this.delay(6000);
+
+    await this.waitForLoaderToDisappear(page).catch(async () => {
+      this.log(context, "Mode 2: loader wait timed out, using fallback delay");
+      await this.delay(3000);
+    });
+
     this.log(context, "Mode 2: copying result");
     await this.copyResult(page);
     await this.closePremiumModalIfPresent(page);
@@ -414,7 +455,7 @@ export class QuillBotAutomation {
 
     // Try to scroll into view
     await button.evaluate((el) => el.scrollIntoView({ block: "center" }));
-    await this.delay(500);
+    await this.delay(100); // Reduced from 500ms
 
     // Try mouse click (most reliable for avoiding detection/overlays)
     const box = await button.boundingBox();
@@ -422,34 +463,17 @@ export class QuillBotAutomation {
       const x = box.x + box.width / 2;
       const y = box.y + box.height / 2;
 
-      console.log(`Clicking button at ${x}, ${y}`);
-
-      // Check what's actually at this position
-      const elementAtPoint = await page.evaluate(
-        (x, y) => {
-          const el = document.elementFromPoint(x, y);
-          return el
-            ? { tag: el.tagName, class: el.className, id: el.id }
-            : null;
-        },
-        x,
-        y
-      );
-
-      if (elementAtPoint) {
-        console.log(
-          `Element at click position: ${elementAtPoint.tag}.${elementAtPoint.class}#${elementAtPoint.id}`
-        );
-      }
+      // Only log if we need to debug
+      // console.log(`Clicking button at ${x}, ${y}`);
 
       await page.mouse.move(x, y);
-      await this.delay(100);
+      await this.delay(50); // Reduced from 100ms
       await page.mouse.down();
-      await this.delay(100);
+      await this.delay(50); // Reduced from 100ms
       await page.mouse.up();
 
       // Fallback: Aggressive JS click if mouse didn't work (React sometimes needs this)
-      await this.delay(200);
+      await this.delay(100); // Reduced from 200ms
       await page.evaluate((el) => {
         const event = new MouseEvent("click", {
           view: window,
@@ -495,14 +519,25 @@ export class QuillBotAutomation {
 
   private async handleCookieConsent(page: Page): Promise<void> {
     try {
+      // Reduced timeout to check quickly
       const consentButton = await this.waitForAnySelector(
         page,
         SELECTORS.cookieConsent,
-        2000
+        1000
       );
       console.log("Cookie consent banner detected, clicking accept/close...");
       await consentButton.click();
-      await this.delay(1000); // Wait for banner to animate out
+
+      // Wait for banner to disappear instead of fixed delay
+      try {
+        await page.waitForFunction(
+          (selectors) => !selectors.some((s) => document.querySelector(s)),
+          { timeout: 2000 },
+          SELECTORS.cookieConsent
+        );
+      } catch {
+        // If wait fails, just continue
+      }
     } catch {
       // Ignore if cookie banner is not present
     }
