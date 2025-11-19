@@ -63,7 +63,9 @@ app.get("/debug/list-screenshots", (_req: Request, res: Response) => {
     const files = fs
       .readdirSync(dir)
       .filter(
-        (file: string) => file.startsWith("error_") && file.endsWith(".png")
+        (file: string) =>
+          (file.startsWith("error_") || file.startsWith("debug_")) &&
+          file.endsWith(".png")
       )
       .map((file: string) => ({
         name: file,
@@ -85,7 +87,7 @@ app.get("/debug/view/:filename", (req: Request, res: Response) => {
 
   // Basic security check
   if (
-    !filename.startsWith("error_") ||
+    (!filename.startsWith("error_") && !filename.startsWith("debug_")) ||
     !filename.endsWith(".png") ||
     filename.includes("..")
   ) {

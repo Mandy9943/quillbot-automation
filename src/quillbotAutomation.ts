@@ -142,9 +142,12 @@ export class QuillBotAutomation {
 
       await page.setViewport({ width: 1920, height: 1080 });
 
+      // Add stealth headers
       await page.setExtraHTTPHeaders({
-        Referer: "https://quillbot.com/",
-        Origin: "https://quillbot.com",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
       });
 
       // Retry navigation with exponential backoff
@@ -185,6 +188,51 @@ export class QuillBotAutomation {
       console.log("loginButton");
 
       await loginButton.click();
+
+      // Wait for navigation to complete after login
+      try {
+        await page.waitForNavigation({
+          waitUntil: "networkidle2",
+          timeout: 15000,
+        });
+      } catch {
+        console.log(
+          "Login navigation wait timed out, checking if we are redirected..."
+        );
+      }
+
+      // Take a screenshot after login attempt to debug potential toasts/errors
+      const loginTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      await page.screenshot({
+        path: `debug_login_${loginTimestamp}.png` as any,
+        fullPage: true,
+      });
+      console.log(
+        `Login attempt screenshot saved to debug_login_${loginTimestamp}.png`
+      );
+
+      // Check if we are still on login page or redirected to Facebook/Google
+      const currentUrl = page.url();
+      if (
+        currentUrl.includes("facebook.com") ||
+        currentUrl.includes("google.com")
+      ) {
+        throw new Error(
+          `Login failed: Redirected to social login page (${currentUrl})`
+        );
+      }
+
+      if (currentUrl.includes("/login")) {
+        // Check for error messages
+        const error = await page.evaluate(() =>
+          document.body.innerText.match(
+            /Invalid email or password|Incorrect password/i
+          )
+        );
+        if (error) {
+          throw new Error(`Login failed: ${error[0]}`);
+        }
+      }
 
       // Retry paraphraser navigation with exponential backoff
       loginSuccess = false;
@@ -376,7 +424,8 @@ export class QuillBotAutomation {
     const field = await this.waitForAnySelector(page, selectors, this.timeout);
     await field.click({ clickCount: 3 });
     await page.keyboard.press("Backspace");
-    await field.type(value);
+    await this.delay(100);
+    await field.type(value, { delay: 50 }); // Add typing delay to mimic human
   }
 
   private async ensureMode(page: Page, selectors: string[]): Promise<void> {
