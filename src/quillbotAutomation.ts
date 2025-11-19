@@ -226,7 +226,23 @@ export class QuillBotAutomation {
     await this.closePremiumModalIfPresent(page);
     this.log(context, "Mode 1: clicking paraphrase");
     await this.triggerParaphrase(page);
-    await this.delay(1000);
+    
+    // Wait for either loader or result to appear to confirm click worked
+    try {
+      await page.waitForFunction(
+        (loadingSelectors, copySelectors) => {
+          const isLoading = loadingSelectors.some(s => document.querySelector(s));
+          const isDone = copySelectors.some(s => document.querySelector(s));
+          return isLoading || isDone;
+        },
+        { timeout: 5000 },
+        SELECTORS.loadingIndicator,
+        SELECTORS.copyButton
+      );
+    } catch {
+      this.log(context, "Mode 1: Warning - No loader or result detected after click");
+    }
+
     await this.closePremiumModalIfPresent(page);
     await this.waitForLoaderToDisappear(page).catch(async () => {
       this.log(context, "Mode 1: loader wait timed out, using fallback delay");
@@ -288,6 +304,17 @@ export class QuillBotAutomation {
 
   private async fillInputArea(page: Page, text: string): Promise<void> {
     await this.setInputAreaContent(page, text);
+    // Verify content was set
+    const content = await page.evaluate((selector) => {
+      const el = document.querySelector(selector);
+      return el?.textContent || (el as HTMLInputElement)?.value || "";
+    }, SELECTORS.inputArea[0]);
+    
+    if (!content && text.length > 0) {
+      console.log("Warning: Input area seems empty after fill attempt");
+      // Retry once
+      await this.setInputAreaContent(page, text);
+    }
   }
 
   private async clearInputArea(page: Page): Promise<void> {
@@ -309,7 +336,10 @@ export class QuillBotAutomation {
       SELECTORS.paraphraseButton,
       this.timeout
     );
-    await button.click();
+    // Use evaluate to click for better reliability
+    await page.evaluate((el) => {
+      if (el instanceof HTMLElement) el.click();
+    }, button);
   }
 
   private async copyResult(page: Page): Promise<void> {
