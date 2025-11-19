@@ -414,8 +414,26 @@ export class QuillBotAutomation {
   }
 
   private async ensureMode(page: Page, selectors: string[]): Promise<void> {
-    const tab = await this.waitForAnySelector(page, selectors, this.timeout);
-    await tab.click();
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const tab = await this.waitForAnySelector(
+          page,
+          selectors,
+          this.timeout
+        );
+        await tab.click({ delay: 5 });
+        return;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : "";
+        if (!message.includes("detached")) {
+          break;
+        }
+        await this.delay(100);
+      }
+    }
+    throw lastError ?? new Error("Failed to switch mode tab");
   }
 
   private async switchMode(page: Page, selectors: string[]): Promise<void> {
