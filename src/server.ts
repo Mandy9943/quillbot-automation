@@ -54,6 +54,52 @@ app.get("/debug/screenshot", (_req: Request, res: Response) => {
   }
 });
 
+app.get("/debug/list-screenshots", (_req: Request, res: Response) => {
+  const fs = require("fs");
+  const path = require("path");
+  const dir = process.cwd();
+
+  try {
+    const files = fs
+      .readdirSync(dir)
+      .filter(
+        (file: string) => file.startsWith("error_") && file.endsWith(".png")
+      )
+      .map((file: string) => ({
+        name: file,
+        url: `/debug/view/${file}`,
+        time: fs.statSync(path.join(dir, file)).mtime,
+      }))
+      .sort((a: any, b: any) => b.time - a.time);
+
+    res.json(files);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+app.get("/debug/view/:filename", (req: Request, res: Response) => {
+  const path = require("path");
+  const fs = require("fs");
+  const filename = req.params.filename;
+
+  // Basic security check
+  if (
+    !filename.startsWith("error_") ||
+    !filename.endsWith(".png") ||
+    filename.includes("..")
+  ) {
+    return res.status(400).send("Invalid filename");
+  }
+
+  const filePath = path.resolve(filename);
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send("File not found");
+  }
+});
+
 app.post("/paraphrase", async (req: Request, res: Response) => {
   const { text } = req.body ?? {};
   if (typeof text !== "string" || !text.trim()) {

@@ -654,6 +654,25 @@ export class QuillBotAutomation {
       }
     }
 
+    // If we failed to find any selector, take a screenshot for debugging
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const path = `error_selector_${timestamp}.png`;
+      await page.screenshot({ path: path as any, fullPage: true });
+      console.log(
+        `Failed to find selectors: ${selectors.join(
+          ", "
+        )}. Screenshot saved to ${path}`
+      );
+
+      // Also log current URL and title
+      const url = page.url();
+      const title = await page.title();
+      console.log(`Current page state - URL: ${url}, Title: ${title}`);
+    } catch (e) {
+      console.error("Failed to capture debug info on selector failure:", e);
+    }
+
     throw (
       lastError ??
       new Error(`Unable to find selectors: ${selectors.join(", ")}`)
