@@ -120,6 +120,8 @@ export class QuillBotAutomation {
           "--disable-extensions",
           "--disable-background-networking",
           "--dns-prefetch-disable",
+          "--window-size=1920,1080",
+          "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         ],
         protocolTimeout: 60000,
       });
@@ -224,6 +226,7 @@ export class QuillBotAutomation {
     await this.closePremiumModalIfPresent(page);
     this.log(context, "Mode 1: clicking paraphrase");
     await this.triggerParaphrase(page);
+    await this.delay(1000);
     await this.closePremiumModalIfPresent(page);
     await this.waitForLoaderToDisappear(page).catch(async () => {
       this.log(context, "Mode 1: loader wait timed out, using fallback delay");
