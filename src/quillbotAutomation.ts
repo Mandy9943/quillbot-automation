@@ -621,15 +621,43 @@ export class QuillBotAutomation {
     page: Page,
     timeout = this.loaderWaitTimeout
   ): Promise<void> {
-    const waitTimeout =
-      typeof timeout === "number" && timeout > 0 ? timeout : 0;
+    const hasCustomTimeout = typeof timeout === "number" && timeout > 0;
+    const pollInterval = 500;
+    const maxWait = hasCustomTimeout ? timeout : Number.POSITIVE_INFINITY;
+    const start = Date.now();
 
-    await page.waitForFunction(
-      (selectors: string[]) =>
-        selectors.every((selector) => !document.querySelector(selector)),
-      { timeout: waitTimeout },
-      SELECTORS.loadingIndicator
-    );
+    while (true) {
+      if (page.isClosed()) {
+        throw new Error("Page closed while waiting for loader to disappear");
+      }
+
+      const stillLoading = await page
+        .evaluate(
+          (selectors) =>
+            selectors.some((selector) => !!document.querySelector(selector)),
+          SELECTORS.loadingIndicator
+        )
+        .catch((error) => {
+          // If the execution context is destroyed (navigation/reload), retry
+          const message = error instanceof Error ? error.message : "";
+          if (message.includes("Execution context was destroyed")) {
+            return true;
+          }
+          throw error;
+        });
+
+      if (!stillLoading) {
+        return;
+      }
+
+      if (Date.now() - start >= maxWait) {
+        throw new Error(
+          `Loader still visible after ${maxWait}ms. You can increase loaderWaitTimeout if needed.`
+        );
+      }
+
+      await this.delay(pollInterval);
+    }
   }
 
   private async setInputAreaContent(page: Page, text: string): Promise<void> {
