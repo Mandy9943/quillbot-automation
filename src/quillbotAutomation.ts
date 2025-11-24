@@ -40,6 +40,8 @@ export interface QuillBotAutomationOptions {
   password: string;
   headless?: boolean;
   timeout?: number;
+  /** Optional override (ms) for waiting the spinner to disappear. Use 0 for no timeout. */
+  loaderWaitTimeout?: number;
 }
 
 export class QuillBotAutomation {
@@ -48,10 +50,12 @@ export class QuillBotAutomation {
   private readyPromise?: Promise<void>;
   private taskQueue: Promise<unknown> = Promise.resolve();
   private readonly timeout: number;
+  private readonly loaderWaitTimeout: number;
   private cookieConsentHandled = false;
 
   constructor(private readonly options: QuillBotAutomationOptions) {
     this.timeout = options.timeout ?? 30000;
+    this.loaderWaitTimeout = options.loaderWaitTimeout ?? 0;
   }
 
   async init(): Promise<void> {
@@ -299,7 +303,7 @@ export class QuillBotAutomation {
             const isDone = copySelectors.some((s) => document.querySelector(s));
             return isLoading || isDone;
           },
-          { timeout: 4000 },
+          { timeout: 40000 },
           SELECTORS.loadingIndicator,
           SELECTORS.copyButton
         );
@@ -322,10 +326,7 @@ export class QuillBotAutomation {
     }
 
     await this.closePremiumModalIfPresent(page);
-    await this.waitForLoaderToDisappear(page).catch(async () => {
-      this.log(context, "Mode 1: loader wait timed out, using fallback delay");
-      await this.delay(1500);
-    });
+    await this.waitForLoaderToDisappear(page);
     this.log(context, "Mode 1: copying result");
     await this.copyResult(page);
     await this.closePremiumModalIfPresent(page);
@@ -368,7 +369,7 @@ export class QuillBotAutomation {
             const isDone = copySelectors.some((s) => document.querySelector(s));
             return isLoading || isDone;
           },
-          { timeout: 4000 },
+          { timeout: 40000 },
           SELECTORS.loadingIndicator,
           SELECTORS.copyButton
         );
@@ -386,10 +387,7 @@ export class QuillBotAutomation {
 
     await this.closePremiumModalIfPresent(page);
 
-    await this.waitForLoaderToDisappear(page).catch(async () => {
-      this.log(context, "Mode 2: loader wait timed out, using fallback delay");
-      await this.delay(3000);
-    });
+    await this.waitForLoaderToDisappear(page);
 
     this.log(context, "Mode 2: copying result");
     await this.copyResult(page);
@@ -621,12 +619,15 @@ export class QuillBotAutomation {
 
   private async waitForLoaderToDisappear(
     page: Page,
-    timeout = this.timeout
+    timeout = this.loaderWaitTimeout
   ): Promise<void> {
+    const waitTimeout =
+      typeof timeout === "number" && timeout > 0 ? timeout : 0;
+
     await page.waitForFunction(
       (selectors: string[]) =>
         selectors.every((selector) => !document.querySelector(selector)),
-      { timeout: 12000 },
+      { timeout: waitTimeout },
       SELECTORS.loadingIndicator
     );
   }
