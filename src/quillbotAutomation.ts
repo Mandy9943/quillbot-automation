@@ -12,8 +12,8 @@ const SELECTORS = {
   closePremiumModal: [
     "body > div.MuiModal-root.MuiDialog-root.css-1056mjz > div.MuiDialog-container.MuiDialog-scrollPaper.css-ekeie0 > div > div.MuiBox-root.css-1q9qc6z > div > button",
   ],
-  firstModeTab: ["#Paraphraser-mode-tab-0", "#Paraphraser-mode-tab-0 > div"],
-  secondModeTab: ["#Paraphraser-mode-tab-1"],
+  firstModeTab: ["#Paraphraser-mode-tab-5", "#Paraphraser-mode-tab-5 > div"], // Simple mode
+  secondModeTab: ["#Paraphraser-mode-tab-8", "#Paraphraser-mode-tab-8 > div"], // Shorten mode
   inputArea: ["#paraphraser-input-box"],
   clearInputButton: [
     "#paraphraser-input-content > div.MuiBox-root.css-xi6nk4 > button",
