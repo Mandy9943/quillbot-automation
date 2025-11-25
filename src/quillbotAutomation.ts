@@ -12,6 +12,7 @@ const SELECTORS = {
   closePremiumModal: [
     "body > div.MuiModal-root.MuiDialog-root.css-1056mjz > div.MuiDialog-container.MuiDialog-scrollPaper.css-ekeie0 > div > div.MuiBox-root.css-1q9qc6z > div > button",
   ],
+  standardModeTab: ["#Paraphraser-mode-tab-0", "#Paraphraser-mode-tab-0 > div"], // Standard mode
   firstModeTab: ["#Paraphraser-mode-tab-5", "#Paraphraser-mode-tab-5 > div"], // Simple mode
   secondModeTab: ["#Paraphraser-mode-tab-8", "#Paraphraser-mode-tab-8 > div"], // Shorten mode
   inputArea: ["#paraphraser-input-box"],
@@ -102,6 +103,35 @@ export class QuillBotAutomation {
         firstMode: firstModeOutput,
         secondMode: secondModeOutput,
       } satisfies ParaphraseResult;
+    };
+
+    const run = this.taskQueue.then(() => task());
+    this.taskQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  async paraphraseStandardMode(
+    text: string,
+    requestId?: string
+  ): Promise<string> {
+    if (!text.trim()) {
+      throw new Error("Input text must not be empty.");
+    }
+
+    await this.init();
+
+    const context = requestId ?? `paraphrase-standard-${Date.now()}`;
+    this.log(
+      context,
+      `Queued standard mode request (length: ${text.length} chars)`
+    );
+
+    const task = async () => {
+      const page = this.getPage();
+      this.log(context, "Starting standard mode flow");
+      const output = await this.runStandardMode(page, text, context);
+      this.log(context, "Standard mode complete");
+      return output;
     };
 
     const run = this.taskQueue.then(() => task());
@@ -394,6 +424,69 @@ export class QuillBotAutomation {
     await this.closePremiumModalIfPresent(page);
     const output = await this.readClipboard(page);
     this.log(context, "Mode 2: clipboard captured");
+
+    this.resetPageState(page, context);
+
+    return output;
+  }
+
+  private async runStandardMode(
+    page: Page,
+    text: string,
+    context: string
+  ): Promise<string> {
+    this.log(context, "Standard mode: ensuring tab active");
+    await this.ensureMode(page, SELECTORS.standardModeTab);
+    this.log(context, "Standard mode: filling input");
+    await this.fillInputArea(page, text);
+    await this.closePremiumModalIfPresent(page);
+    await this.handleCookieConsent(page);
+    this.log(context, "Standard mode: clicking paraphrase");
+
+    let clickSuccess = false;
+    for (let i = 0; i < 3; i++) {
+      await this.triggerParaphrase(page);
+
+      try {
+        await page.waitForFunction(
+          (loadingSelectors, copySelectors) => {
+            const isLoading = loadingSelectors.some((s) =>
+              document.querySelector(s)
+            );
+            const isDone = copySelectors.some((s) => document.querySelector(s));
+            return isLoading || isDone;
+          },
+          { timeout: 40000 },
+          SELECTORS.loadingIndicator,
+          SELECTORS.copyButton
+        );
+        clickSuccess = true;
+        break;
+      } catch {
+        this.log(
+          context,
+          `Standard mode: Click attempt ${
+            i + 1
+          } failed to trigger action, retrying...`
+        );
+        await this.delay(500);
+      }
+    }
+
+    if (!clickSuccess) {
+      this.log(
+        context,
+        "Standard mode: Warning - No loader or result detected after multiple click attempts"
+      );
+    }
+
+    await this.closePremiumModalIfPresent(page);
+    await this.waitForLoaderToDisappear(page);
+    this.log(context, "Standard mode: copying result");
+    await this.copyResult(page);
+    await this.closePremiumModalIfPresent(page);
+    const output = await this.readClipboard(page);
+    this.log(context, "Standard mode: clipboard captured");
 
     this.resetPageState(page, context);
 

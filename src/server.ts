@@ -140,6 +140,48 @@ app.post("/paraphrase", async (req: Request, res: Response) => {
   }
 });
 
+app.post("/paraphrase-standard", async (req: Request, res: Response) => {
+  const { text } = req.body ?? {};
+  if (typeof text !== "string" || !text.trim()) {
+    return res
+      .status(400)
+      .json({ error: "Field 'text' must be a non-empty string." });
+  }
+
+  const requestId = randomUUID();
+  const startTime = performance.now();
+  console.log(
+    `[${requestId}] Received standard mode paraphrase request (length: ${text.length})`
+  );
+
+  try {
+    await readyPromise;
+    const result: string = await automation.paraphraseStandardMode(
+      text,
+      requestId
+    );
+    const durationMs = Math.round(performance.now() - startTime);
+    console.log(
+      `[${requestId}] Standard mode paraphrase completed in ${durationMs} ms`
+    );
+    res.json({
+      inputLength: text.length,
+      output: result,
+      durationMs,
+    });
+  } catch (error) {
+    const durationMs = Math.round(performance.now() - startTime);
+    console.error("Standard mode paraphrasing request failed:", error);
+    console.error(`[${requestId}] Request failed after ${durationMs} ms`);
+    res
+      .status(500)
+      .json({
+        error: "Failed to process standard mode paraphrasing request.",
+        durationMs,
+      });
+  }
+});
+
 const server = app.listen(port, () => {
   console.log(`Express API listening on http://localhost:${port}`);
 });
