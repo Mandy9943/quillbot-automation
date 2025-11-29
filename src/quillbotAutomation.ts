@@ -54,6 +54,7 @@ export class QuillBotAutomation {
   private readonly timeout: number;
   private readonly loaderWaitTimeout: number;
   private cookieConsentHandled = false;
+  private browserFailed = false;
 
   constructor(private readonly options: QuillBotAutomationOptions) {
     this.timeout = options.timeout ?? 30000;
@@ -61,6 +62,12 @@ export class QuillBotAutomation {
   }
 
   async init(): Promise<void> {
+    // Si el navegador falló previamente, forzar reinicio
+    if (this.browserFailed) {
+      console.log("Browser in failed state, forcing restart...");
+      await this.dispose();
+    }
+
     if (!this.readyPromise) {
       this.readyPromise = this.setup();
     }
@@ -74,6 +81,8 @@ export class QuillBotAutomation {
     this.page = undefined;
     this.readyPromise = undefined;
     this.taskQueue = Promise.resolve();
+    this.browserFailed = false;
+    this.cookieConsentHandled = false;
   }
 
   async paraphrase(
@@ -90,20 +99,33 @@ export class QuillBotAutomation {
     this.log(context, `Queued request (length: ${text.length} chars)`);
 
     const task = async () => {
-      const page = this.getPage();
-      this.log(context, "Starting mode 1 flow");
-      const firstModeOutput = await this.runFirstMode(page, text, context);
-      this.log(context, "Mode 1 complete, starting mode 2 flow");
-      const secondModeOutput = await this.runSecondMode(
-        page,
-        firstModeOutput,
-        context
-      );
-      this.log(context, "Mode 2 complete");
-      return {
-        firstMode: firstModeOutput,
-        secondMode: secondModeOutput,
-      } satisfies ParaphraseResult;
+      try {
+        const page = this.getPage();
+        this.log(context, "Starting mode 1 flow");
+        const firstModeOutput = await this.runFirstMode(page, text, context);
+        this.log(context, "Mode 1 complete, starting mode 2 flow");
+        const secondModeOutput = await this.runSecondMode(
+          page,
+          firstModeOutput,
+          context
+        );
+        this.log(context, "Mode 2 complete");
+        return {
+          firstMode: firstModeOutput,
+          secondMode: secondModeOutput,
+        } satisfies ParaphraseResult;
+      } catch (error) {
+        if (this.isCriticalError(error)) {
+          this.log(
+            context,
+            `Critical error detected: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          this.browserFailed = true;
+        }
+        throw error;
+      }
     };
 
     const run = this.taskQueue.then(() => task());
@@ -128,11 +150,24 @@ export class QuillBotAutomation {
     );
 
     const task = async () => {
-      const page = this.getPage();
-      this.log(context, "Starting standard mode flow");
-      const output = await this.runStandardMode(page, text, context);
-      this.log(context, "Standard mode complete");
-      return output;
+      try {
+        const page = this.getPage();
+        this.log(context, "Starting standard mode flow");
+        const output = await this.runStandardMode(page, text, context);
+        this.log(context, "Standard mode complete");
+        return output;
+      } catch (error) {
+        if (this.isCriticalError(error)) {
+          this.log(
+            context,
+            `Critical error detected: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          this.browserFailed = true;
+        }
+        throw error;
+      }
     };
 
     const run = this.taskQueue.then(() => task());
@@ -635,13 +670,23 @@ export class QuillBotAutomation {
   }
 
   private async copyResult(page: Page): Promise<void> {
-    const button = await this.waitForAnySelector(
-      page,
-      SELECTORS.copyButton,
-      this.timeout
-    );
-    await button.click();
-    await this.delay(500);
+    try {
+      const button = await this.waitForAnySelector(
+        page,
+        SELECTORS.copyButton,
+        this.timeout
+      );
+      await button.click();
+      await this.delay(500);
+    } catch (error) {
+      // Si copyButton no aparece, es un error crítico que indica estado irrecuperable
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        "Failed to find copy button - browser likely in bad state:",
+        message
+      );
+      throw new Error(`Critical: Copy button not found - ${message}`);
+    }
   }
 
   private async readClipboard(page: Page): Promise<string> {
@@ -859,5 +904,58 @@ export class QuillBotAutomation {
       lastError ??
       new Error(`Unable to find selectors: ${selectors.join(", ")}`)
     );
+  }
+
+  /**
+   * Determina si un error es crítico y requiere reinicio del navegador.
+   * Errores críticos incluyen:
+   * - Timeout esperando el botón de copiar (indica que paraphrase falló)
+   * - Contexto de ejecución destruido inesperadamente
+   * - Página cerrada inesperadamente
+   * - Navegador desconectado
+   */
+  private isCriticalError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+
+    // Timeout esperando copyButton es crítico
+    if (
+      message.includes("copy button not found") ||
+      (message.includes("timeout") && message.includes("copy"))
+    ) {
+      return true;
+    }
+
+    // Contexto de ejecución destruido inesperadamente
+    if (
+      message.includes("execution context was destroyed") &&
+      !message.includes("navigation")
+    ) {
+      return true;
+    }
+
+    // Página cerrada o navegador desconectado
+    if (
+      message.includes("page closed") ||
+      message.includes("browser has been closed") ||
+      message.includes("session closed") ||
+      message.includes("target closed")
+    ) {
+      return true;
+    }
+
+    // Protocolo de timeout generalmente indica problema serio
+    if (
+      message.includes("protocol error") ||
+      message.includes("websocket") ||
+      message.includes("connection closed")
+    ) {
+      return true;
+    }
+
+    return false;
   }
 }
