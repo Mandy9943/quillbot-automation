@@ -9,8 +9,8 @@ services:
       - QUILLBOT_PASSWORD=${QUILLBOT_PASSWORD}
       - HEADLESS=true
       - PORT=3090
-    ports:
-      - "3090:3090"
+    expose:
+      - 3090
     restart: unless-stopped
     # Add shared memory size for Chrome stability
     shm_size: '2gb'
