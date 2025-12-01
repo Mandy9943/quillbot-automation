@@ -4,8 +4,6 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: quillbot-automation
-    ports:
-      - "3090:3090"
     environment:
       - QUILLBOT_EMAIL=${QUILLBOT_EMAIL}
       - QUILLBOT_PASSWORD=${QUILLBOT_PASSWORD}
