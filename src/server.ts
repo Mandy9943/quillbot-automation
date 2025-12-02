@@ -22,6 +22,7 @@ if (!email || !password) {
 
 const automation = new QuillBotAutomation({ email, password, headless });
 let isReady = false;
+let isRestarting = false;
 
 const readyPromise = automation
   .init()
@@ -39,7 +40,7 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", ready: isReady });
+  res.json({ status: "ok", ready: isReady, restarting: isRestarting });
 });
 
 app.get("/debug/screenshot", (_req: Request, res: Response) => {
@@ -103,6 +104,15 @@ app.get("/debug/view/:filename", (req: Request, res: Response) => {
 });
 
 app.post("/paraphrase", async (req: Request, res: Response) => {
+  if (!isReady || isRestarting) {
+    return res.status(503).json({
+      error:
+        "Browser is not ready. Please wait for initialization or restart to complete.",
+      ready: isReady,
+      restarting: isRestarting,
+    });
+  }
+
   const { text } = req.body ?? {};
   if (typeof text !== "string" || !text.trim()) {
     return res
@@ -141,6 +151,15 @@ app.post("/paraphrase", async (req: Request, res: Response) => {
 });
 
 app.post("/paraphrase-standard", async (req: Request, res: Response) => {
+  if (!isReady || isRestarting) {
+    return res.status(503).json({
+      error:
+        "Browser is not ready. Please wait for initialization or restart to complete.",
+      ready: isReady,
+      restarting: isRestarting,
+    });
+  }
+
   const { text } = req.body ?? {};
   if (typeof text !== "string" || !text.trim()) {
     return res
@@ -181,31 +200,30 @@ app.post("/paraphrase-standard", async (req: Request, res: Response) => {
 });
 
 app.post("/restart", async (_req: Request, res: Response) => {
+  if (isRestarting) {
+    return res.status(409).json({
+      error: "Browser restart already in progress. Please wait.",
+      restarting: true,
+    });
+  }
+
   console.log("Restart requested - disposing current browser session...");
+  isRestarting = true;
+  isReady = false;
+
   try {
     await automation.dispose();
-    isReady = false;
     console.log("Browser disposed, reinitializing...");
 
-    // Reinitialize
-    const initPromise = automation
-      .init()
-      .then(() => {
-        isReady = true;
-        console.log("Browser restarted and ready.");
-      })
-      .catch((error) => {
-        console.error("Failed to restart browser:", error);
-        throw error;
-      });
+    await automation.init();
+    isReady = true;
+    isRestarting = false;
+    console.log("Browser restarted and ready.");
 
-    // Update the global readyPromise
-    (global as any).readyPromise = initPromise;
-
-    await initPromise;
     res.json({ status: "ok", message: "Browser restarted successfully" });
   } catch (error) {
     console.error("Restart failed:", error);
+    isRestarting = false;
     res.status(500).json({
       error: "Failed to restart browser",
       details: error instanceof Error ? error.message : String(error),

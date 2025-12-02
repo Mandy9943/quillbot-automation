@@ -55,6 +55,7 @@ export class QuillBotAutomation {
   private readonly loaderWaitTimeout: number;
   private cookieConsentHandled = false;
   private browserFailed = false;
+  private isRestarting = false;
 
   constructor(private readonly options: QuillBotAutomationOptions) {
     this.timeout = options.timeout ?? 30000;
@@ -83,6 +84,7 @@ export class QuillBotAutomation {
     this.taskQueue = Promise.resolve();
     this.browserFailed = false;
     this.cookieConsentHandled = false;
+    this.isRestarting = false;
   }
 
   async paraphrase(
@@ -124,11 +126,22 @@ export class QuillBotAutomation {
           );
           this.browserFailed = true;
 
+          // Prevent concurrent restarts
+          if (this.isRestarting) {
+            this.log(
+              context,
+              "Restart already in progress, skipping automatic restart"
+            );
+            throw error;
+          }
+
           // Attempt automatic restart
           this.log(context, "Attempting automatic browser restart...");
+          this.isRestarting = true;
           try {
             await this.dispose();
             await this.init();
+            this.isRestarting = false;
             this.log(
               context,
               "Browser restarted successfully, retrying request..."
@@ -160,6 +173,7 @@ export class QuillBotAutomation {
                   : String(retryError)
               }`
             );
+            this.isRestarting = false;
             throw retryError;
           }
         }
@@ -205,11 +219,22 @@ export class QuillBotAutomation {
           );
           this.browserFailed = true;
 
+          // Prevent concurrent restarts
+          if (this.isRestarting) {
+            this.log(
+              context,
+              "Restart already in progress, skipping automatic restart"
+            );
+            throw error;
+          }
+
           // Attempt automatic restart
           this.log(context, "Attempting automatic browser restart...");
+          this.isRestarting = true;
           try {
             await this.dispose();
             await this.init();
+            this.isRestarting = false;
             this.log(
               context,
               "Browser restarted successfully, retrying request..."
@@ -229,6 +254,7 @@ export class QuillBotAutomation {
                   : String(retryError)
               }`
             );
+            this.isRestarting = false;
             throw retryError;
           }
         }
