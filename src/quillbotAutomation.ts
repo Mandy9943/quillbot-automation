@@ -123,17 +123,24 @@ export class QuillBotAutomation {
             }`
           );
           this.browserFailed = true;
-          
+
           // Attempt automatic restart
           this.log(context, "Attempting automatic browser restart...");
           try {
             await this.dispose();
             await this.init();
-            this.log(context, "Browser restarted successfully, retrying request...");
-            
+            this.log(
+              context,
+              "Browser restarted successfully, retrying request..."
+            );
+
             // Retry the operation once after restart
             const page = this.getPage();
-            const firstModeOutput = await this.runFirstMode(page, text, context);
+            const firstModeOutput = await this.runFirstMode(
+              page,
+              text,
+              context
+            );
             const secondModeOutput = await this.runSecondMode(
               page,
               firstModeOutput,
@@ -148,7 +155,9 @@ export class QuillBotAutomation {
             this.log(
               context,
               `Retry failed after browser restart: ${
-                retryError instanceof Error ? retryError.message : String(retryError)
+                retryError instanceof Error
+                  ? retryError.message
+                  : String(retryError)
               }`
             );
             throw retryError;
@@ -195,14 +204,17 @@ export class QuillBotAutomation {
             }`
           );
           this.browserFailed = true;
-          
+
           // Attempt automatic restart
           this.log(context, "Attempting automatic browser restart...");
           try {
             await this.dispose();
             await this.init();
-            this.log(context, "Browser restarted successfully, retrying request...");
-            
+            this.log(
+              context,
+              "Browser restarted successfully, retrying request..."
+            );
+
             // Retry the operation once after restart
             const page = this.getPage();
             const output = await this.runStandardMode(page, text, context);
@@ -212,7 +224,9 @@ export class QuillBotAutomation {
             this.log(
               context,
               `Retry failed after browser restart: ${
-                retryError instanceof Error ? retryError.message : String(retryError)
+                retryError instanceof Error
+                  ? retryError.message
+                  : String(retryError)
               }`
             );
             throw retryError;

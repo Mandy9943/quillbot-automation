@@ -173,12 +173,10 @@ app.post("/paraphrase-standard", async (req: Request, res: Response) => {
     const durationMs = Math.round(performance.now() - startTime);
     console.error("Standard mode paraphrasing request failed:", error);
     console.error(`[${requestId}] Request failed after ${durationMs} ms`);
-    res
-      .status(500)
-      .json({
-        error: "Failed to process standard mode paraphrasing request.",
-        durationMs,
-      });
+    res.status(500).json({
+      error: "Failed to process standard mode paraphrasing request.",
+      durationMs,
+    });
   }
 });
 
@@ -188,7 +186,7 @@ app.post("/restart", async (_req: Request, res: Response) => {
     await automation.dispose();
     isReady = false;
     console.log("Browser disposed, reinitializing...");
-    
+
     // Reinitialize
     const initPromise = automation
       .init()
@@ -200,17 +198,17 @@ app.post("/restart", async (_req: Request, res: Response) => {
         console.error("Failed to restart browser:", error);
         throw error;
       });
-    
+
     // Update the global readyPromise
     (global as any).readyPromise = initPromise;
-    
+
     await initPromise;
     res.json({ status: "ok", message: "Browser restarted successfully" });
   } catch (error) {
     console.error("Restart failed:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Failed to restart browser",
-      details: error instanceof Error ? error.message : String(error)
+      details: error instanceof Error ? error.message : String(error),
     });
   }
 });
