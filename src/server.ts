@@ -182,6 +182,39 @@ app.post("/paraphrase-standard", async (req: Request, res: Response) => {
   }
 });
 
+app.post("/restart", async (_req: Request, res: Response) => {
+  console.log("Restart requested - disposing current browser session...");
+  try {
+    await automation.dispose();
+    isReady = false;
+    console.log("Browser disposed, reinitializing...");
+    
+    // Reinitialize
+    const initPromise = automation
+      .init()
+      .then(() => {
+        isReady = true;
+        console.log("Browser restarted and ready.");
+      })
+      .catch((error) => {
+        console.error("Failed to restart browser:", error);
+        throw error;
+      });
+    
+    // Update the global readyPromise
+    (global as any).readyPromise = initPromise;
+    
+    await initPromise;
+    res.json({ status: "ok", message: "Browser restarted successfully" });
+  } catch (error) {
+    console.error("Restart failed:", error);
+    res.status(500).json({ 
+      error: "Failed to restart browser",
+      details: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
 const server = app.listen(port, () => {
   console.log(`Express API listening on http://localhost:${port}`);
 });
