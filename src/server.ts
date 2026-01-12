@@ -81,27 +81,34 @@ app.get("/debug/list-screenshots", (_req: Request, res: Response) => {
   }
 });
 
-app.get("/debug/view/:filename", (req: Request, res: Response) => {
-  const path = require("path");
-  const fs = require("fs");
-  const filename = req.params.filename;
+app.get(
+  "/debug/view/:filename",
+  (req: Request<{ filename: string }>, res: Response) => {
+    const path = require("path");
+    const fs = require("fs");
+    const filename = req.params.filename;
 
-  // Basic security check
-  if (
-    (!filename.startsWith("error_") && !filename.startsWith("debug_")) ||
-    !filename.endsWith(".png") ||
-    filename.includes("..")
-  ) {
-    return res.status(400).send("Invalid filename");
-  }
+    if (typeof filename !== "string") {
+      return res.status(400).send("Invalid filename");
+    }
 
-  const filePath = path.resolve(filename);
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).send("File not found");
+    // Basic security check
+    if (
+      (!filename.startsWith("error_") && !filename.startsWith("debug_")) ||
+      !filename.endsWith(".png") ||
+      filename.includes("..")
+    ) {
+      return res.status(400).send("Invalid filename");
+    }
+
+    const filePath = path.resolve(filename);
+    if (fs.existsSync(filePath)) {
+      res.sendFile(filePath);
+    } else {
+      res.status(404).send("File not found");
+    }
   }
-});
+);
 
 app.post("/paraphrase", async (req: Request, res: Response) => {
   if (!isReady || isRestarting) {
