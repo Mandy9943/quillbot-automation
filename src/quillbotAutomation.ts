@@ -20,6 +20,9 @@ const SELECTORS = {
     "#paraphraser-input-content > div.MuiBox-root.css-xi6nk4 > button",
   ],
   paraphraseButton: [
+    'button[data-testid="pphr/input_footer/paraphrase_button"]',
+    '[data-testid="pphr/input_footer/paraphrase_button"]',
+    'span[aria-label^="Paraphrase"] button',
     "#controlledInputBoxContainer > div.MuiBox-root.css-1a43h92 > div > div.MuiBox-root.css-n0jqrr > span > div > button",
     "#controlledInputBoxContainer > div.MuiBox-root.css-1buxzwp > div > div.MuiBox-root.css-1s1ozo1 > span > div > button",
   ],
@@ -689,11 +692,22 @@ export class QuillBotAutomation {
   }
 
   private async triggerParaphrase(page: Page): Promise<void> {
-    const button = await this.waitForAnySelector(
-      page,
-      SELECTORS.paraphraseButton,
-      this.timeout
-    );
+    let button: ElementHandle<Element> | undefined;
+    try {
+      button = await this.waitForAnySelector(
+        page,
+        SELECTORS.paraphraseButton,
+        this.timeout
+      );
+    } catch (error) {
+      // QuillBot frequently changes generated classnames; fall back to the
+      // tooltip shortcut when the button selector drifts.
+      console.log(
+        "Paraphrase button selector not found; falling back to keyboard Ctrl+Enter"
+      );
+      await this.pressParaphraseShortcut(page);
+      return;
+    }
 
     // Log what we found to help debugging
     const buttonState = await page.evaluate(
@@ -730,35 +744,49 @@ export class QuillBotAutomation {
     await this.delay(100); // Reduced from 500ms
 
     // Try mouse click (most reliable for avoiding detection/overlays)
-    const box = await button.boundingBox();
-    if (box) {
-      const x = box.x + box.width / 2;
-      const y = box.y + box.height / 2;
+    try {
+      const box = await button.boundingBox();
+      if (box) {
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
 
-      // Only log if we need to debug
-      // console.log(`Clicking button at ${x}, ${y}`);
+        await page.mouse.move(x, y);
+        await this.delay(10);
+        await page.mouse.down();
+        await this.delay(10);
+        await page.mouse.up();
 
-      await page.mouse.move(x, y);
-      await this.delay(10); // Reduced from 50ms
-      await page.mouse.down();
-      await this.delay(10); // Reduced from 50ms
-      await page.mouse.up();
+        // Fallback: JS click dispatch (React sometimes needs this)
+        await this.delay(50);
+        await page.evaluate((el) => {
+          const event = new MouseEvent("click", {
+            view: window,
+            bubbles: true,
+            cancelable: true,
+          });
+          el.dispatchEvent(event);
+        }, button);
+        return;
+      }
 
-      // Fallback: Aggressive JS click if mouse didn't work (React sometimes needs this)
-      await this.delay(50); // Reduced from 100ms
-      await page.evaluate((el) => {
-        const event = new MouseEvent("click", {
-          view: window,
-          bubbles: true,
-          cancelable: true,
-        });
-        el.dispatchEvent(event);
-      }, button);
-    } else {
-      // Fallback
-      console.log("Native click failed, trying JS click");
+      console.log("Paraphrase button has no bounding box; using JS click");
       await page.evaluate((el) => (el as HTMLElement).click(), button);
+    } catch (clickError) {
+      console.log(
+        `Click on paraphrase button failed; falling back to keyboard shortcut: ${
+          clickError instanceof Error ? clickError.message : String(clickError)
+        }`
+      );
+      await this.pressParaphraseShortcut(page);
     }
+  }
+
+  private async pressParaphraseShortcut(page: Page): Promise<void> {
+    // QuillBot advertises Ctrl+Enter; use Meta+Enter on macOS.
+    const modifier = process.platform === "darwin" ? "Meta" : "Control";
+    await page.keyboard.down(modifier);
+    await page.keyboard.press("Enter");
+    await page.keyboard.up(modifier);
   }
 
   private async copyResult(page: Page): Promise<void> {
