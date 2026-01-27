@@ -173,8 +173,11 @@ export class QuillBotAutomation {
     try {
       console.log("Checking if already logged in...");
 
-      // Navigate to paraphraser page
-      await this.page.goto(PARAPHRASER_URL, {
+      // Navigate to settings page - this requires authentication
+      // If we get redirected to login, we're not logged in
+      const SETTINGS_URL = "https://quillbot.com/settings";
+
+      await this.page.goto(SETTINGS_URL, {
         waitUntil: "networkidle2",
         timeout: 30000,
       });
@@ -183,32 +186,33 @@ export class QuillBotAutomation {
       await this.delay(2000);
 
       const currentUrl = this.page.url();
+      console.log(
+        `Login check - navigated to settings, current URL: ${currentUrl}`,
+      );
 
-      // If we're still on paraphraser page (not redirected to login), we're logged in
-      if (
-        currentUrl.includes("/paraphrasing-tool") ||
-        currentUrl.includes("/paraphraser")
-      ) {
-        // Double-check by looking for the input area
-        try {
-          await this.page.waitForSelector(SELECTORS.inputArea[0], {
-            timeout: 10000,
-          });
-          console.log("Already logged in - session restored successfully!");
-          return true;
-        } catch {
-          console.log(
-            "Paraphraser page but input area not found, may need re-login",
-          );
-        }
+      // If we're still on settings page (not redirected to login), we're logged in
+      if (currentUrl.includes("/settings")) {
+        console.log("Settings page accessible - user is logged in!");
+
+        // Navigate to paraphraser for actual use
+        await this.page.goto(PARAPHRASER_URL, {
+          waitUntil: "networkidle2",
+          timeout: 30000,
+        });
+
+        return true;
       }
 
       // If redirected to login page, we're not logged in
       if (currentUrl.includes("/login")) {
-        console.log("Session expired or not logged in - login required");
+        console.log(
+          "Redirected to login page - session expired or not logged in",
+        );
         return false;
       }
 
+      // Any other redirect means we're probably not logged in
+      console.log("Unexpected redirect - assuming not logged in");
       return false;
     } catch (error) {
       console.log("Error checking login status:", error);
