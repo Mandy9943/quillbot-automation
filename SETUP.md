@@ -5,6 +5,7 @@ This document explains how to configure session persistence to avoid the "max 10
 ## The Problem
 
 QuillBot limits accounts to **10 concurrent sessions**. Without session persistence:
+
 - Every app restart creates a new session
 - After ~10 restarts, all sessions are consumed
 - The app crashes with "unable to login" error
@@ -12,6 +13,7 @@ QuillBot limits accounts to **10 concurrent sessions**. Without session persiste
 ## The Solution
 
 The app now supports **session persistence** through:
+
 1. **Browser user data directory** (`userDataDir`) - stores Chrome profile data
 2. **Cookie backup** - saves/restores cookies to a JSON file
 3. **Smart login detection** - skips login if session is still valid
@@ -56,19 +58,19 @@ Since you're deploying with **Dockerfile only** in Coolify, you need to configur
 3. Click **"+ Add"** → **"Volume Mount"**
 4. Add two volumes:
 
-| Name | Destination Path |
-|------|------------------|
-| `browser-data` | `/app/browser-data` |
-| `sessions-data` | `/app/sessions` |
+| Name            | Destination Path    |
+| --------------- | ------------------- |
+| `browser-data`  | `/app/browser-data` |
+| `sessions-data` | `/app/sessions`     |
 
 ### Step 2: Add Environment Variables (Optional)
 
 Go to **"Environment Variables"** and add:
 
-| Variable | Value |
-|----------|-------|
+| Variable           | Value               |
+| ------------------ | ------------------- |
 | `BROWSER_DATA_DIR` | `/app/browser-data` |
-| `SESSIONS_DIR` | `/app/sessions` |
+| `SESSIONS_DIR`     | `/app/sessions`     |
 
 > Note: These are optional - the defaults already point to these paths.
 
@@ -79,12 +81,14 @@ Click **"Redeploy"** to apply the changes.
 ### Step 4: Verify
 
 After the first login, check the logs. You should see:
+
 ```
 Saved X cookies to /app/sessions/cookies.json
 Login successful - cookies saved for session persistence
 ```
 
 On subsequent restarts, you should see:
+
 ```
 Loaded X cookies from /app/sessions/cookies.json
 Checking if already logged in...
@@ -118,14 +122,14 @@ Session restored from cookies - skipping login!
 
 ## Environment Variables Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BROWSER_DATA_DIR` | `./browser-data` | Chrome user data directory |
-| `SESSIONS_DIR` | `./sessions` | Cookie backup directory |
-| `QUILLBOT_EMAIL` | (required) | QuillBot account email |
-| `QUILLBOT_PASSWORD` | (required) | QuillBot account password |
-| `HEADLESS` | `true` | Run browser in headless mode |
-| `PORT` | `3000` | API server port |
+| Variable            | Default          | Description                  |
+| ------------------- | ---------------- | ---------------------------- |
+| `BROWSER_DATA_DIR`  | `./browser-data` | Chrome user data directory   |
+| `SESSIONS_DIR`      | `./sessions`     | Cookie backup directory      |
+| `QUILLBOT_EMAIL`    | (required)       | QuillBot account email       |
+| `QUILLBOT_PASSWORD` | (required)       | QuillBot account password    |
+| `HEADLESS`          | `true`           | Run browser in headless mode |
+| `PORT`              | `3000`           | API server port              |
 
 ---
 

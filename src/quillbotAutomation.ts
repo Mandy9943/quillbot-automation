@@ -1,6 +1,11 @@
-import puppeteer, { Browser, ElementHandle, Page, CookieParam } from "puppeteer";
 import * as fs from "fs";
 import * as path from "path";
+import puppeteer, {
+  Browser,
+  CookieParam,
+  ElementHandle,
+  Page,
+} from "puppeteer";
 
 const LOGIN_URL = "https://quillbot.com/login";
 
@@ -172,7 +177,7 @@ export class QuillBotAutomation {
 
     try {
       console.log("Checking if already logged in...");
-      
+
       // Navigate to paraphraser page
       await this.page.goto(PARAPHRASER_URL, {
         waitUntil: "networkidle2",
@@ -183,16 +188,23 @@ export class QuillBotAutomation {
       await this.delay(2000);
 
       const currentUrl = this.page.url();
-      
+
       // If we're still on paraphraser page (not redirected to login), we're logged in
-      if (currentUrl.includes("/paraphrasing-tool") || currentUrl.includes("/paraphraser")) {
+      if (
+        currentUrl.includes("/paraphrasing-tool") ||
+        currentUrl.includes("/paraphraser")
+      ) {
         // Double-check by looking for the input area
         try {
-          await this.page.waitForSelector(SELECTORS.inputArea[0], { timeout: 10000 });
+          await this.page.waitForSelector(SELECTORS.inputArea[0], {
+            timeout: 10000,
+          });
           console.log("Already logged in - session restored successfully!");
           return true;
         } catch {
-          console.log("Paraphraser page but input area not found, may need re-login");
+          console.log(
+            "Paraphraser page but input area not found, may need re-login",
+          );
         }
       }
 
@@ -211,7 +223,7 @@ export class QuillBotAutomation {
 
   async paraphrase(
     text: string,
-    requestId?: string
+    requestId?: string,
   ): Promise<ParaphraseResult> {
     if (!text.trim()) {
       throw new Error("Input text must not be empty.");
@@ -231,7 +243,7 @@ export class QuillBotAutomation {
         const secondModeOutput = await this.runSecondMode(
           page,
           firstModeOutput,
-          context
+          context,
         );
         this.log(context, "Mode 2 complete");
         return {
@@ -244,7 +256,7 @@ export class QuillBotAutomation {
             context,
             `Critical error detected: ${
               error instanceof Error ? error.message : String(error)
-            }`
+            }`,
           );
           this.browserFailed = true;
 
@@ -252,7 +264,7 @@ export class QuillBotAutomation {
           if (this.isRestarting) {
             this.log(
               context,
-              "Restart already in progress, skipping automatic restart"
+              "Restart already in progress, skipping automatic restart",
             );
             throw error;
           }
@@ -266,7 +278,7 @@ export class QuillBotAutomation {
             this.isRestarting = false;
             this.log(
               context,
-              "Browser restarted successfully, retrying request..."
+              "Browser restarted successfully, retrying request...",
             );
 
             // Retry the operation once after restart
@@ -274,12 +286,12 @@ export class QuillBotAutomation {
             const firstModeOutput = await this.runFirstMode(
               page,
               text,
-              context
+              context,
             );
             const secondModeOutput = await this.runSecondMode(
               page,
               firstModeOutput,
-              context
+              context,
             );
             this.log(context, "Retry successful after browser restart");
             return {
@@ -293,7 +305,7 @@ export class QuillBotAutomation {
                 retryError instanceof Error
                   ? retryError.message
                   : String(retryError)
-              }`
+              }`,
             );
             this.isRestarting = false;
             throw retryError;
@@ -310,7 +322,7 @@ export class QuillBotAutomation {
 
   async paraphraseStandardMode(
     text: string,
-    requestId?: string
+    requestId?: string,
   ): Promise<string> {
     if (!text.trim()) {
       throw new Error("Input text must not be empty.");
@@ -321,7 +333,7 @@ export class QuillBotAutomation {
     const context = requestId ?? `paraphrase-standard-${Date.now()}`;
     this.log(
       context,
-      `Queued standard mode request (length: ${text.length} chars)`
+      `Queued standard mode request (length: ${text.length} chars)`,
     );
 
     const task = async () => {
@@ -337,7 +349,7 @@ export class QuillBotAutomation {
             context,
             `Critical error detected: ${
               error instanceof Error ? error.message : String(error)
-            }`
+            }`,
           );
           this.browserFailed = true;
 
@@ -345,7 +357,7 @@ export class QuillBotAutomation {
           if (this.isRestarting) {
             this.log(
               context,
-              "Restart already in progress, skipping automatic restart"
+              "Restart already in progress, skipping automatic restart",
             );
             throw error;
           }
@@ -359,7 +371,7 @@ export class QuillBotAutomation {
             this.isRestarting = false;
             this.log(
               context,
-              "Browser restarted successfully, retrying request..."
+              "Browser restarted successfully, retrying request...",
             );
 
             // Retry the operation once after restart
@@ -374,7 +386,7 @@ export class QuillBotAutomation {
                 retryError instanceof Error
                   ? retryError.message
                   : String(retryError)
-              }`
+              }`,
             );
             this.isRestarting = false;
             throw retryError;
@@ -443,11 +455,11 @@ export class QuillBotAutomation {
 
       // Try to restore session from cookies first
       const cookiesLoaded = await this.loadCookies();
-      
+
       if (cookiesLoaded) {
         // Check if we're already logged in (session still valid)
         const alreadyLoggedIn = await this.isAlreadyLoggedIn();
-        
+
         if (alreadyLoggedIn) {
           // Session restored successfully, finalize setup
           await this.closePremiumModalIfPresent(page);
@@ -456,8 +468,10 @@ export class QuillBotAutomation {
           console.log("Session restored from cookies - skipping login!");
           return;
         }
-        
-        console.log("Saved cookies exist but session invalid, performing fresh login...");
+
+        console.log(
+          "Saved cookies exist but session invalid, performing fresh login...",
+        );
       }
 
       // Full login flow - no valid session found
@@ -498,7 +512,7 @@ export class QuillBotAutomation {
       const loginButton = await this.waitForAnySelector(
         page,
         SELECTORS.loginButton,
-        this.timeout
+        this.timeout,
       );
 
       console.log("loginButton");
@@ -516,7 +530,7 @@ export class QuillBotAutomation {
         });
       } catch {
         console.log(
-          "Login navigation wait timed out, checking if we are redirected..."
+          "Login navigation wait timed out, checking if we are redirected...",
         );
       }
 
@@ -527,7 +541,7 @@ export class QuillBotAutomation {
         currentUrl.includes("google.com")
       ) {
         throw new Error(
-          `Login failed: Redirected to social login page (${currentUrl})`
+          `Login failed: Redirected to social login page (${currentUrl})`,
         );
       }
 
@@ -535,8 +549,8 @@ export class QuillBotAutomation {
         // Check for error messages
         const error = await page.evaluate(() =>
           document.body.innerText.match(
-            /Invalid email or password|Incorrect password/i
-          )
+            /Invalid email or password|Incorrect password/i,
+          ),
         );
         if (error) {
           throw new Error(`Login failed: ${error[0]}`);
@@ -560,7 +574,7 @@ export class QuillBotAutomation {
             throw error;
           }
           console.log(
-            `Paraphraser page navigation failed, retry ${retries}/${maxRetries}...`
+            `Paraphraser page navigation failed, retry ${retries}/${maxRetries}...`,
           );
           await this.delay(2000 * retries);
         }
@@ -569,7 +583,7 @@ export class QuillBotAutomation {
       await this.closePremiumModalIfPresent(page);
       await this.handleCookieConsent(page);
       await this.ensureMode(page, SELECTORS.firstModeTab);
-      
+
       // Save cookies after successful login for future session restoration
       await this.saveCookies();
       console.log("Login successful - cookies saved for session persistence");
@@ -589,7 +603,7 @@ export class QuillBotAutomation {
   private async runFirstMode(
     page: Page,
     text: string,
-    context: string
+    context: string,
   ): Promise<string> {
     this.log(context, "Mode 1: ensuring tab active");
     await this.ensureMode(page, SELECTORS.firstModeTab);
@@ -608,21 +622,21 @@ export class QuillBotAutomation {
         await page.waitForFunction(
           (loadingSelectors, copySelectors) => {
             const isLoading = loadingSelectors.some((s) =>
-              document.querySelector(s)
+              document.querySelector(s),
             );
             const isDone = copySelectors.some((s) => document.querySelector(s));
             return isLoading || isDone;
           },
           { timeout: 40000 },
           SELECTORS.loadingIndicator,
-          SELECTORS.copyButton
+          SELECTORS.copyButton,
         );
         clickSuccess = true;
         break;
       } catch {
         this.log(
           context,
-          `Mode 1: Click attempt ${i + 1} failed to trigger action, retrying...`
+          `Mode 1: Click attempt ${i + 1} failed to trigger action, retrying...`,
         );
         await this.delay(500);
       }
@@ -631,7 +645,7 @@ export class QuillBotAutomation {
     if (!clickSuccess) {
       this.log(
         context,
-        "Mode 1: Warning - No loader or result detected after multiple click attempts"
+        "Mode 1: Warning - No loader or result detected after multiple click attempts",
       );
     }
 
@@ -648,7 +662,7 @@ export class QuillBotAutomation {
   private async runSecondMode(
     page: Page,
     text: string,
-    context: string
+    context: string,
   ): Promise<string> {
     this.log(context, "Mode 2: Reloading page to ensure fresh state");
     await page.reload({ ignoreCache: false, waitUntil: "networkidle2" });
@@ -674,14 +688,14 @@ export class QuillBotAutomation {
         await page.waitForFunction(
           (loadingSelectors, copySelectors) => {
             const isLoading = loadingSelectors.some((s) =>
-              document.querySelector(s)
+              document.querySelector(s),
             );
             const isDone = copySelectors.some((s) => document.querySelector(s));
             return isLoading || isDone;
           },
           { timeout: 40000 },
           SELECTORS.loadingIndicator,
-          SELECTORS.copyButton
+          SELECTORS.copyButton,
         );
         clickSuccess = true;
         break;
@@ -713,7 +727,7 @@ export class QuillBotAutomation {
   private async runStandardMode(
     page: Page,
     text: string,
-    context: string
+    context: string,
   ): Promise<string> {
     this.log(context, "Standard mode: ensuring tab active");
     await this.ensureMode(page, SELECTORS.standardModeTab);
@@ -731,14 +745,14 @@ export class QuillBotAutomation {
         await page.waitForFunction(
           (loadingSelectors, copySelectors) => {
             const isLoading = loadingSelectors.some((s) =>
-              document.querySelector(s)
+              document.querySelector(s),
             );
             const isDone = copySelectors.some((s) => document.querySelector(s));
             return isLoading || isDone;
           },
           { timeout: 40000 },
           SELECTORS.loadingIndicator,
-          SELECTORS.copyButton
+          SELECTORS.copyButton,
         );
         clickSuccess = true;
         break;
@@ -747,7 +761,7 @@ export class QuillBotAutomation {
           context,
           `Standard mode: Click attempt ${
             i + 1
-          } failed to trigger action, retrying...`
+          } failed to trigger action, retrying...`,
         );
         await this.delay(500);
       }
@@ -756,7 +770,7 @@ export class QuillBotAutomation {
     if (!clickSuccess) {
       this.log(
         context,
-        "Standard mode: Warning - No loader or result detected after multiple click attempts"
+        "Standard mode: Warning - No loader or result detected after multiple click attempts",
       );
     }
 
@@ -776,7 +790,7 @@ export class QuillBotAutomation {
   private async typeIntoField(
     page: Page,
     selectors: string[],
-    value: string
+    value: string,
   ): Promise<void> {
     const field = await this.waitForAnySelector(page, selectors, this.timeout);
     await field.click({ clickCount: 3 });
@@ -792,7 +806,7 @@ export class QuillBotAutomation {
         const tab = await this.waitForAnySelector(
           page,
           selectors,
-          this.timeout
+          this.timeout,
         );
         await tab.click({ delay: 5 });
         return;
@@ -832,7 +846,7 @@ export class QuillBotAutomation {
       const clearButton = await this.waitForAnySelector(
         page,
         SELECTORS.clearInputButton,
-        2000
+        2000,
       );
       await clearButton.click();
     } catch {
@@ -846,13 +860,13 @@ export class QuillBotAutomation {
       button = await this.waitForAnySelector(
         page,
         SELECTORS.paraphraseButton,
-        this.timeout
+        this.timeout,
       );
     } catch (error) {
       // QuillBot frequently changes generated classnames; fall back to the
       // tooltip shortcut when the button selector drifts.
       console.log(
-        "Paraphrase button selector not found; falling back to keyboard Ctrl+Enter"
+        "Paraphrase button selector not found; falling back to keyboard Ctrl+Enter",
       );
       await this.pressParaphraseShortcut(page);
       return;
@@ -867,11 +881,11 @@ export class QuillBotAutomation {
           el.getAttribute("aria-disabled") === "true",
         visible: (el as HTMLElement).offsetParent !== null,
       }),
-      button
+      button,
     );
 
     console.log(
-      `Paraphrase button found: disabled=${buttonState.disabled}, visible=${buttonState.visible}`
+      `Paraphrase button found: disabled=${buttonState.disabled}, visible=${buttonState.visible}`,
     );
 
     if (buttonState.disabled) {
@@ -880,7 +894,7 @@ export class QuillBotAutomation {
       const input = await this.waitForAnySelector(
         page,
         SELECTORS.inputArea,
-        2000
+        2000,
       );
       await input.focus();
       await page.keyboard.type(" ");
@@ -924,7 +938,7 @@ export class QuillBotAutomation {
       console.log(
         `Click on paraphrase button failed; falling back to keyboard shortcut: ${
           clickError instanceof Error ? clickError.message : String(clickError)
-        }`
+        }`,
       );
       await this.pressParaphraseShortcut(page);
     }
@@ -943,7 +957,7 @@ export class QuillBotAutomation {
       const button = await this.waitForAnySelector(
         page,
         SELECTORS.copyButton,
-        this.timeout
+        this.timeout,
       );
       await button.click();
       await this.delay(500);
@@ -952,7 +966,7 @@ export class QuillBotAutomation {
       const message = error instanceof Error ? error.message : String(error);
       console.error(
         "Failed to find copy button - browser likely in bad state:",
-        message
+        message,
       );
       throw new Error(`Critical: Copy button not found - ${message}`);
     }
@@ -967,7 +981,7 @@ export class QuillBotAutomation {
       const closeButton = await this.waitForAnySelector(
         page,
         SELECTORS.closePremiumModal,
-        500
+        500,
       );
       await closeButton.click();
       await this.delay(200);
@@ -996,7 +1010,7 @@ export class QuillBotAutomation {
       const consentButton = await this.waitForAnySelector(
         page,
         SELECTORS.cookieConsent,
-        500
+        500,
       );
       console.log("Cookie consent banner detected, clicking accept/close...");
       await consentButton.click();
@@ -1007,7 +1021,7 @@ export class QuillBotAutomation {
         await page.waitForFunction(
           (selectors) => !selectors.some((s) => document.querySelector(s)),
           { timeout: 1000 },
-          SELECTORS.cookieConsent
+          SELECTORS.cookieConsent,
         );
       } catch {
         // If wait fails, just continue
@@ -1027,7 +1041,7 @@ export class QuillBotAutomation {
 
   private async waitForLoaderToDisappear(
     page: Page,
-    timeout = this.loaderWaitTimeout
+    timeout = this.loaderWaitTimeout,
   ): Promise<void> {
     const hasCustomTimeout = typeof timeout === "number" && timeout > 0;
     const pollInterval = 500;
@@ -1043,7 +1057,7 @@ export class QuillBotAutomation {
         .evaluate(
           (selectors) =>
             selectors.some((selector) => !!document.querySelector(selector)),
-          SELECTORS.loadingIndicator
+          SELECTORS.loadingIndicator,
         )
         .catch((error) => {
           // If the execution context is destroyed (navigation/reload), retry
@@ -1060,7 +1074,7 @@ export class QuillBotAutomation {
 
       if (Date.now() - start >= maxWait) {
         throw new Error(
-          `Loader still visible after ${maxWait}ms. You can increase loaderWaitTimeout if needed.`
+          `Loader still visible after ${maxWait}ms. You can increase loaderWaitTimeout if needed.`,
         );
       }
 
@@ -1072,7 +1086,7 @@ export class QuillBotAutomation {
     const inputArea = await this.waitForAnySelector(
       page,
       SELECTORS.inputArea,
-      this.timeout
+      this.timeout,
     );
 
     await inputArea.click({ clickCount: 3 });
@@ -1099,7 +1113,7 @@ export class QuillBotAutomation {
           return root;
         }
         const contentEditable = root.querySelector<HTMLElement>(
-          "[contenteditable='true']"
+          "[contenteditable='true']",
         );
         if (contentEditable) {
           return contentEditable;
@@ -1136,7 +1150,7 @@ export class QuillBotAutomation {
           bubbles: true,
           inputType: "insertFromPaste",
           data: value,
-        })
+        }),
       );
       target.dispatchEvent(new Event("change", { bubbles: true }));
     }, text);
@@ -1145,7 +1159,7 @@ export class QuillBotAutomation {
   private async waitForAnySelector(
     page: Page,
     selectors: string[],
-    timeout = this.timeout
+    timeout = this.timeout,
   ): Promise<ElementHandle<Element>> {
     let lastError: unknown;
     for (const selector of selectors) {

@@ -15,7 +15,7 @@ const port = Number(process.env.PORT ?? 3000);
 
 if (!email || !password) {
   console.error(
-    "QUILLBOT_EMAIL and QUILLBOT_PASSWORD must be set in environment variables."
+    "QUILLBOT_EMAIL and QUILLBOT_PASSWORD must be set in environment variables.",
   );
   process.exit(1);
 }
@@ -66,7 +66,7 @@ app.get("/debug/list-screenshots", (_req: Request, res: Response) => {
       .filter(
         (file: string) =>
           (file.startsWith("error_") || file.startsWith("debug_")) &&
-          file.endsWith(".png")
+          file.endsWith(".png"),
       )
       .map((file: string) => ({
         name: file,
@@ -107,7 +107,7 @@ app.get(
     } else {
       res.status(404).send("File not found");
     }
-  }
+  },
 );
 
 app.post("/paraphrase", async (req: Request, res: Response) => {
@@ -130,14 +130,14 @@ app.post("/paraphrase", async (req: Request, res: Response) => {
   const requestId = randomUUID();
   const startTime = performance.now();
   console.log(
-    `[${requestId}] Received paraphrase request (length: ${text.length})`
+    `[${requestId}] Received paraphrase request (length: ${text.length})`,
   );
 
   try {
     await readyPromise;
     const result: ParaphraseResult = await automation.paraphrase(
       text,
-      requestId
+      requestId,
     );
     const durationMs = Math.round(performance.now() - startTime);
     console.log(`[${requestId}] Paraphrase completed in ${durationMs} ms`);
@@ -177,18 +177,18 @@ app.post("/paraphrase-standard", async (req: Request, res: Response) => {
   const requestId = randomUUID();
   const startTime = performance.now();
   console.log(
-    `[${requestId}] Received standard mode paraphrase request (length: ${text.length})`
+    `[${requestId}] Received standard mode paraphrase request (length: ${text.length})`,
   );
 
   try {
     await readyPromise;
     const result: string = await automation.paraphraseStandardMode(
       text,
-      requestId
+      requestId,
     );
     const durationMs = Math.round(performance.now() - startTime);
     console.log(
-      `[${requestId}] Standard mode paraphrase completed in ${durationMs} ms`
+      `[${requestId}] Standard mode paraphrase completed in ${durationMs} ms`,
     );
     res.json({
       inputLength: text.length,
@@ -244,7 +244,7 @@ const server = app.listen(port, () => {
 
 const shutdown = async () => {
   console.log("Shutting down server...");
-  
+
   // Save cookies before disposing to preserve session for next startup
   try {
     console.log("Saving session cookies before shutdown...");
@@ -252,7 +252,7 @@ const shutdown = async () => {
   } catch (error) {
     console.error("Failed to save cookies on shutdown:", error);
   }
-  
+
   server.close();
   await automation.dispose();
   process.exit(0);

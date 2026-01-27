@@ -15,7 +15,7 @@ services:
       - 3090
     restart: unless-stopped
     # Add shared memory size for Chrome stability
-    shm_size: '2gb'
+    shm_size: "2gb"
     # Security options for running Chrome in container
     cap_add:
       - SYS_ADMIN
@@ -27,4 +27,3 @@ services:
 volumes:
   browser-data:
   sessions-data:
-
