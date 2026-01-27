@@ -244,6 +244,15 @@ const server = app.listen(port, () => {
 
 const shutdown = async () => {
   console.log("Shutting down server...");
+  
+  // Save cookies before disposing to preserve session for next startup
+  try {
+    console.log("Saving session cookies before shutdown...");
+    await automation.saveCookies();
+  } catch (error) {
+    console.error("Failed to save cookies on shutdown:", error);
+  }
+  
   server.close();
   await automation.dispose();
   process.exit(0);

@@ -1,3 +1,11 @@
 .env
 node_modules
 dist
+
+# Session persistence directories (contain sensitive data)
+browser-data/
+sessions/
+
+# Debug screenshots
+error_*.png
+debug_*.png

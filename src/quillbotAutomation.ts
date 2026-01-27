@@ -1,6 +1,13 @@
-import puppeteer, { Browser, ElementHandle, Page } from "puppeteer";
+import puppeteer, { Browser, ElementHandle, Page, CookieParam } from "puppeteer";
+import * as fs from "fs";
+import * as path from "path";
 
 const LOGIN_URL = "https://quillbot.com/login";
+
+// Session persistence paths (configurable via environment variables)
+const BROWSER_DATA_DIR = process.env.BROWSER_DATA_DIR || "./browser-data";
+const SESSIONS_DIR = process.env.SESSIONS_DIR || "./sessions";
+const COOKIES_FILE = path.join(SESSIONS_DIR, "cookies.json");
 const PARAPHRASER_URL = "https://quillbot.com/paraphrasing-tool";
 
 const SELECTORS = {
@@ -88,6 +95,118 @@ export class QuillBotAutomation {
     this.browserFailed = false;
     this.cookieConsentHandled = false;
     this.isRestarting = false;
+  }
+
+  /**
+   * Ensures session directories exist
+   */
+  private ensureDirectoriesExist(): void {
+    if (!fs.existsSync(BROWSER_DATA_DIR)) {
+      fs.mkdirSync(BROWSER_DATA_DIR, { recursive: true });
+      console.log(`Created browser data directory: ${BROWSER_DATA_DIR}`);
+    }
+    if (!fs.existsSync(SESSIONS_DIR)) {
+      fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+      console.log(`Created sessions directory: ${SESSIONS_DIR}`);
+    }
+  }
+
+  /**
+   * Save cookies to file for session persistence
+   */
+  async saveCookies(): Promise<void> {
+    if (!this.page) {
+      console.log("No page available, skipping cookie save");
+      return;
+    }
+
+    try {
+      const cookies = await this.page.cookies();
+      this.ensureDirectoriesExist();
+      fs.writeFileSync(COOKIES_FILE, JSON.stringify(cookies, null, 2));
+      console.log(`Saved ${cookies.length} cookies to ${COOKIES_FILE}`);
+    } catch (error) {
+      console.error("Failed to save cookies:", error);
+    }
+  }
+
+  /**
+   * Load cookies from file if they exist
+   * @returns true if cookies were loaded successfully
+   */
+  async loadCookies(): Promise<boolean> {
+    if (!this.page) {
+      console.log("No page available, skipping cookie load");
+      return false;
+    }
+
+    try {
+      if (!fs.existsSync(COOKIES_FILE)) {
+        console.log("No saved cookies found");
+        return false;
+      }
+
+      const cookiesData = fs.readFileSync(COOKIES_FILE, "utf-8");
+      const cookies: CookieParam[] = JSON.parse(cookiesData);
+
+      if (!Array.isArray(cookies) || cookies.length === 0) {
+        console.log("Cookie file is empty or invalid");
+        return false;
+      }
+
+      await this.page.setCookie(...cookies);
+      console.log(`Loaded ${cookies.length} cookies from ${COOKIES_FILE}`);
+      return true;
+    } catch (error) {
+      console.error("Failed to load cookies:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if user is already logged in by navigating to paraphraser
+   * @returns true if already logged in
+   */
+  private async isAlreadyLoggedIn(): Promise<boolean> {
+    if (!this.page) return false;
+
+    try {
+      console.log("Checking if already logged in...");
+      
+      // Navigate to paraphraser page
+      await this.page.goto(PARAPHRASER_URL, {
+        waitUntil: "networkidle2",
+        timeout: 30000,
+      });
+
+      // Wait a bit for any redirects
+      await this.delay(2000);
+
+      const currentUrl = this.page.url();
+      
+      // If we're still on paraphraser page (not redirected to login), we're logged in
+      if (currentUrl.includes("/paraphrasing-tool") || currentUrl.includes("/paraphraser")) {
+        // Double-check by looking for the input area
+        try {
+          await this.page.waitForSelector(SELECTORS.inputArea[0], { timeout: 10000 });
+          console.log("Already logged in - session restored successfully!");
+          return true;
+        } catch {
+          console.log("Paraphraser page but input area not found, may need re-login");
+        }
+      }
+
+      // If redirected to login page, we're not logged in
+      if (currentUrl.includes("/login")) {
+        console.log("Session expired or not logged in - login required");
+        return false;
+      }
+
+      return false;
+    } catch (error) {
+      console.log("Error checking login status:", error);
+      return false;
+    }
   }
 
   async paraphrase(
@@ -271,9 +390,13 @@ export class QuillBotAutomation {
   }
 
   private async setup(): Promise<void> {
+    // Ensure session directories exist
+    this.ensureDirectoriesExist();
+
     try {
       this.browser = await puppeteer.launch({
         headless: this.options.headless ?? true,
+        userDataDir: BROWSER_DATA_DIR,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -317,6 +440,28 @@ export class QuillBotAutomation {
         Referer: "https://quillbot.com/",
         Origin: "https://quillbot.com",
       });
+
+      // Try to restore session from cookies first
+      const cookiesLoaded = await this.loadCookies();
+      
+      if (cookiesLoaded) {
+        // Check if we're already logged in (session still valid)
+        const alreadyLoggedIn = await this.isAlreadyLoggedIn();
+        
+        if (alreadyLoggedIn) {
+          // Session restored successfully, finalize setup
+          await this.closePremiumModalIfPresent(page);
+          await this.handleCookieConsent(page);
+          await this.ensureMode(page, SELECTORS.firstModeTab);
+          console.log("Session restored from cookies - skipping login!");
+          return;
+        }
+        
+        console.log("Saved cookies exist but session invalid, performing fresh login...");
+      }
+
+      // Full login flow - no valid session found
+      console.log("Performing full login...");
 
       // Retry navigation with exponential backoff
       let loginSuccess = false;
@@ -424,6 +569,10 @@ export class QuillBotAutomation {
       await this.closePremiumModalIfPresent(page);
       await this.handleCookieConsent(page);
       await this.ensureMode(page, SELECTORS.firstModeTab);
+      
+      // Save cookies after successful login for future session restoration
+      await this.saveCookies();
+      console.log("Login successful - cookies saved for session persistence");
     } catch (error) {
       await this.dispose();
       throw error;
