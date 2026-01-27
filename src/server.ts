@@ -10,19 +10,35 @@ import { AccountConfig } from "./accountWorker";
 dotenv.config();
 
 // Parse accounts from environment variable
-const accountsJson = process.env.QUILLBOT_ACCOUNTS;
+let accountsJson = process.env.QUILLBOT_ACCOUNTS;
+
+// Support base64-encoded JSON to avoid shell escaping issues
+if (process.env.QUILLBOT_ACCOUNTS_BASE64) {
+  try {
+    accountsJson = Buffer.from(process.env.QUILLBOT_ACCOUNTS_BASE64, 'base64').toString('utf-8');
+    console.log("Using base64-decoded QUILLBOT_ACCOUNTS_BASE64");
+  } catch (e) {
+    console.error("Failed to decode QUILLBOT_ACCOUNTS_BASE64:", e);
+  }
+}
+
 if (!accountsJson) {
   console.error(
-    "QUILLBOT_ACCOUNTS must be set as a JSON array in environment variables.",
+    "QUILLBOT_ACCOUNTS (or QUILLBOT_ACCOUNTS_BASE64) must be set as a JSON array in environment variables.",
   );
   console.error(
     'Example: QUILLBOT_ACCOUNTS=[{"email":"a@x.com","password":"pass1"},{"email":"b@x.com","password":"pass2"},{"email":"c@x.com","password":"pass3"}]',
+  );
+  console.error(
+    'Or use QUILLBOT_ACCOUNTS_BASE64 with base64-encoded JSON to avoid escaping issues.',
   );
   process.exit(1);
 }
 
 let accounts: AccountConfig[];
 try {
+  console.log("Parsing QUILLBOT_ACCOUNTS, length:", accountsJson.length);
+  console.log("First 100 chars:", accountsJson.substring(0, 100));
   accounts = JSON.parse(accountsJson);
   if (!Array.isArray(accounts) || accounts.length !== 3) {
     throw new Error("QUILLBOT_ACCOUNTS must contain exactly 3 accounts");
@@ -34,6 +50,7 @@ try {
   }
 } catch (error) {
   console.error("Failed to parse QUILLBOT_ACCOUNTS:", error);
+  console.error("Raw value received:", accountsJson);
   process.exit(1);
 }
 
