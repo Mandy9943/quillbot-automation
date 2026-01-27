@@ -225,7 +225,7 @@ app.post("/restart", async (_req: Request, res: Response) => {
 
 // Restart specific worker
 app.post("/restart/:accountId", async (req: Request, res: Response) => {
-  const { accountId } = req.params;
+  const accountId = req.params.accountId as string;
 
   if (!["acc1", "acc2", "acc3"].includes(accountId)) {
     return res.status(400).json({
