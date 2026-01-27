@@ -120,19 +120,62 @@ export class QuillBotAutomation {
    * Clean up stale Chrome lock files that can prevent browser launch after ungraceful shutdown
    */
   private cleanupBrowserLocks(): void {
-    const lockFiles = ["SingletonLock", "SingletonCookie", "SingletonSocket"];
+    console.log("Cleaning up stale browser lock files...");
 
-    for (const lockFile of lockFiles) {
-      const lockPath = path.join(BROWSER_DATA_DIR, lockFile);
-      try {
-        if (fs.existsSync(lockPath)) {
-          fs.unlinkSync(lockPath);
-          console.log(`Removed stale lock file: ${lockPath}`);
+    // Lock files can be in root and in subdirectories
+    const lockFileNames = [
+      "SingletonLock",
+      "SingletonCookie",
+      "SingletonSocket",
+    ];
+    const dirsToCheck = [
+      BROWSER_DATA_DIR,
+      path.join(BROWSER_DATA_DIR, "Default"),
+      path.join(BROWSER_DATA_DIR, "SingletonLock"), // Sometimes it's a directory
+    ];
+
+    for (const dir of dirsToCheck) {
+      // Check if it's a file (sometimes SingletonLock is a symlink/file at root)
+      if (fs.existsSync(dir) && fs.lstatSync(dir).isFile()) {
+        try {
+          fs.unlinkSync(dir);
+          console.log(`Removed stale lock file: ${dir}`);
+        } catch (error) {
+          console.warn(`Failed to remove lock file ${dir}:`, error);
         }
-      } catch (error) {
-        console.warn(`Failed to remove lock file ${lockPath}:`, error);
+        continue;
+      }
+
+      if (!fs.existsSync(dir)) continue;
+
+      for (const lockFile of lockFileNames) {
+        const lockPath = path.join(dir, lockFile);
+        try {
+          if (fs.existsSync(lockPath)) {
+            const stat = fs.lstatSync(lockPath);
+            if (stat.isFile() || stat.isSymbolicLink()) {
+              fs.unlinkSync(lockPath);
+              console.log(`Removed stale lock file: ${lockPath}`);
+            }
+          }
+        } catch (error) {
+          console.warn(`Failed to remove lock file ${lockPath}:`, error);
+        }
       }
     }
+
+    // Also try to remove any leftover lock file at the exact path Chrome mentions
+    const chromeProfileLockPath = path.join(BROWSER_DATA_DIR, "SingletonLock");
+    try {
+      if (fs.existsSync(chromeProfileLockPath)) {
+        fs.unlinkSync(chromeProfileLockPath);
+        console.log(`Removed Chrome profile lock: ${chromeProfileLockPath}`);
+      }
+    } catch (error) {
+      // Ignore - might already be removed
+    }
+
+    console.log("Browser lock cleanup complete");
   }
 
   /**
