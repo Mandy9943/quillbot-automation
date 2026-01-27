@@ -10,7 +10,6 @@ import puppeteer, {
 const LOGIN_URL = "https://quillbot.com/login";
 
 // Session persistence paths (configurable via environment variables)
-const BROWSER_DATA_DIR = process.env.BROWSER_DATA_DIR || "./browser-data";
 const SESSIONS_DIR = process.env.SESSIONS_DIR || "./sessions";
 const COOKIES_FILE = path.join(SESSIONS_DIR, "cookies.json");
 const PARAPHRASER_URL = "https://quillbot.com/paraphrasing-tool";
@@ -106,88 +105,10 @@ export class QuillBotAutomation {
    * Ensures session directories exist
    */
   private ensureDirectoriesExist(): void {
-    if (!fs.existsSync(BROWSER_DATA_DIR)) {
-      fs.mkdirSync(BROWSER_DATA_DIR, { recursive: true });
-      console.log(`Created browser data directory: ${BROWSER_DATA_DIR}`);
-    }
     if (!fs.existsSync(SESSIONS_DIR)) {
       fs.mkdirSync(SESSIONS_DIR, { recursive: true });
       console.log(`Created sessions directory: ${SESSIONS_DIR}`);
     }
-  }
-
-  /**
-   * Clean up stale Chrome lock files that can prevent browser launch after ungraceful shutdown
-   * If lock files persist, delete the entire browser data directory as a last resort
-   */
-  private cleanupBrowserLocks(): void {
-    console.log("Cleaning up stale browser lock files...");
-
-    // Lock files can be in root and in subdirectories
-    const lockFileNames = [
-      "SingletonLock",
-      "SingletonCookie",
-      "SingletonSocket",
-    ];
-
-    let lockFilesFound = false;
-
-    // First, try to remove lock files from root
-    for (const lockFile of lockFileNames) {
-      const lockPath = path.join(BROWSER_DATA_DIR, lockFile);
-      try {
-        if (fs.existsSync(lockPath)) {
-          lockFilesFound = true;
-          const stat = fs.lstatSync(lockPath);
-          if (stat.isSymbolicLink()) {
-            fs.unlinkSync(lockPath);
-            console.log(`Removed stale lock symlink: ${lockPath}`);
-          } else if (stat.isFile()) {
-            fs.unlinkSync(lockPath);
-            console.log(`Removed stale lock file: ${lockPath}`);
-          } else if (stat.isDirectory()) {
-            fs.rmSync(lockPath, { recursive: true, force: true });
-            console.log(`Removed stale lock directory: ${lockPath}`);
-          }
-        }
-      } catch (error) {
-        console.warn(`Failed to remove lock file ${lockPath}:`, error);
-      }
-    }
-
-    // Also check Default subdirectory
-    const defaultDir = path.join(BROWSER_DATA_DIR, "Default");
-    if (fs.existsSync(defaultDir)) {
-      for (const lockFile of lockFileNames) {
-        const lockPath = path.join(defaultDir, lockFile);
-        try {
-          if (fs.existsSync(lockPath)) {
-            lockFilesFound = true;
-            fs.rmSync(lockPath, { recursive: true, force: true });
-            console.log(`Removed stale lock from Default: ${lockPath}`);
-          }
-        } catch (error) {
-          console.warn(`Failed to remove lock file ${lockPath}:`, error);
-        }
-      }
-    }
-
-    // If we found lock files, there might be corruption - clear the entire directory
-    // This ensures a clean start but will require re-login
-    if (lockFilesFound) {
-      console.log(
-        "Lock files were found - clearing entire browser data directory to ensure clean start...",
-      );
-      try {
-        fs.rmSync(BROWSER_DATA_DIR, { recursive: true, force: true });
-        fs.mkdirSync(BROWSER_DATA_DIR, { recursive: true });
-        console.log("Browser data directory cleared and recreated");
-      } catch (error) {
-        console.error("Failed to clear browser data directory:", error);
-      }
-    }
-
-    console.log("Browser lock cleanup complete");
   }
 
   /**
@@ -479,13 +400,12 @@ export class QuillBotAutomation {
     // Ensure session directories exist
     this.ensureDirectoriesExist();
 
-    // Clean up stale lock files from previous ungraceful shutdowns
-    this.cleanupBrowserLocks();
-
     try {
+      // NOTE: We intentionally do NOT use userDataDir to avoid Chrome's SingletonLock
+      // issue when containers restart. Session persistence is handled via cookies only.
       this.browser = await puppeteer.launch({
         headless: this.options.headless ?? true,
-        userDataDir: BROWSER_DATA_DIR,
+        // userDataDir removed - causes lock issues with container restarts
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",

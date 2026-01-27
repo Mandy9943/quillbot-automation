@@ -40,8 +40,8 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # Create app directory
 WORKDIR /app
 
-# Create persistent directories for session storage
-RUN mkdir -p /app/browser-data /app/sessions && chmod 755 /app/browser-data /app/sessions
+# Create persistent directory for session cookies
+RUN mkdir -p /app/sessions && chmod 755 /app/sessions
 
 # Copy package files
 COPY package*.json ./

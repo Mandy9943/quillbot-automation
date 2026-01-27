@@ -12,11 +12,13 @@ QuillBot limits accounts to **10 concurrent sessions**. Without session persiste
 
 ## The Solution
 
-The app now supports **session persistence** through:
+The app now supports **session persistence** through **cookie backup**:
 
-1. **Browser user data directory** (`userDataDir`) - stores Chrome profile data
-2. **Cookie backup** - saves/restores cookies to a JSON file
-3. **Smart login detection** - skips login if session is still valid
+1. **Cookie save/restore** - saves cookies to a JSON file after login
+2. **Smart login detection** - skips login if session is still valid
+3. **Automatic restoration** - loads cookies on startup to restore session
+
+> **Note**: We intentionally do NOT use Chrome's `userDataDir` because it causes `SingletonLock` issues when containers restart with persistent volumes.
 
 ---
 
@@ -28,22 +30,21 @@ The app now supports **session persistence** through:
 # The docker-compose.yml already has volumes configured
 docker-compose up -d
 
-# Sessions will persist in Docker volumes:
-# - browser-data:/app/browser-data
+# Sessions will persist in Docker volume:
 # - sessions-data:/app/sessions
 ```
 
 ### Option 2: Running directly with Node.js
 
 ```bash
-# Sessions will be stored in ./browser-data and ./sessions folders
+# Sessions will be stored in ./sessions folder
 npm run dev
 
-# Or with custom paths (optional)
-BROWSER_DATA_DIR=./my-browser-data SESSIONS_DIR=./my-sessions npm run dev
+# Or with custom path (optional)
+SESSIONS_DIR=./my-sessions npm run dev
 ```
 
-The directories are automatically created and added to `.gitignore`.
+The directory is automatically created and added to `.gitignore`.
 
 ---
 
@@ -56,23 +57,21 @@ Since you're deploying with **Dockerfile only** in Coolify, you need to configur
 1. Go to your application in Coolify
 2. Click **"Persistent Storage"** in the left menu
 3. Click **"+ Add"** → **"Volume Mount"**
-4. Add two volumes:
+4. Add one volume:
 
-| Name            | Destination Path    |
-| --------------- | ------------------- |
-| `browser-data`  | `/app/browser-data` |
-| `sessions-data` | `/app/sessions`     |
+| Name            | Destination Path |
+| --------------- | ---------------- |
+| `sessions-data` | `/app/sessions`  |
 
 ### Step 2: Add Environment Variables (Optional)
 
 Go to **"Environment Variables"** and add:
 
-| Variable           | Value               |
-| ------------------ | ------------------- |
-| `BROWSER_DATA_DIR` | `/app/browser-data` |
-| `SESSIONS_DIR`     | `/app/sessions`     |
+| Variable       | Value           |
+| -------------- | --------------- |
+| `SESSIONS_DIR` | `/app/sessions` |
 
-> Note: These are optional - the defaults already point to these paths.
+> Note: This is optional - the default already points to this path.
 
 ### Step 3: Redeploy
 
@@ -100,26 +99,11 @@ Session restored from cookies - skipping login!
 
 ## Troubleshooting
 
-### "Profile appears to be in use by another Chromium process" error
-
-This happens when Chrome's lock files persist after an ungraceful shutdown. The app now **automatically cleans up** these lock files on startup. You should see in logs:
-
-```
-Removed stale lock file: /app/browser-data/SingletonLock
-```
-
-If you still see this error, manually clean the locks:
-
-```bash
-# In Coolify Terminal or container shell
-rm -f /app/browser-data/SingletonLock /app/browser-data/SingletonCookie /app/browser-data/SingletonSocket
-```
-
 ### Session not persisting after redeploy
 
 - Make sure you're using **"Restart"** not **"Redeploy"** for quick restarts
 - Check if persistent storage is correctly configured in Coolify
-- Verify volumes exist: check the container's mounts
+- Verify the volume exists: check the container's mounts
 
 ### Still hitting session limit
 
@@ -130,28 +114,27 @@ rm -f /app/browser-data/SingletonLock /app/browser-data/SingletonCookie /app/bro
 ### Cookies file not created
 
 - Check file permissions in the container
-- Verify the directories exist: `/app/browser-data` and `/app/sessions`
+- Verify the directory exists: `/app/sessions`
 - Check application logs for errors
 
 ---
 
 ## Environment Variables Reference
 
-| Variable            | Default          | Description                  |
-| ------------------- | ---------------- | ---------------------------- |
-| `BROWSER_DATA_DIR`  | `./browser-data` | Chrome user data directory   |
-| `SESSIONS_DIR`      | `./sessions`     | Cookie backup directory      |
-| `QUILLBOT_EMAIL`    | (required)       | QuillBot account email       |
-| `QUILLBOT_PASSWORD` | (required)       | QuillBot account password    |
-| `HEADLESS`          | `true`           | Run browser in headless mode |
-| `PORT`              | `3000`           | API server port              |
+| Variable            | Default      | Description                  |
+| ------------------- | ------------ | ---------------------------- |
+| `SESSIONS_DIR`      | `./sessions` | Cookie backup directory      |
+| `QUILLBOT_EMAIL`    | (required)   | QuillBot account email       |
+| `QUILLBOT_PASSWORD` | (required)   | QuillBot account password    |
+| `HEADLESS`          | `true`       | Run browser in headless mode |
+| `PORT`              | `3000`       | API server port              |
 
 ---
 
 ## How It Works
 
-1. **On startup**: The app checks for saved cookies
-2. **If cookies exist**: Navigates to paraphraser to check if session is valid
+1. **On startup**: The app checks for saved cookies in `/app/sessions/cookies.json`
+2. **If cookies exist**: Loads them and navigates to paraphraser to check if session is valid
 3. **If session valid**: Skips login completely (saves a session slot!)
 4. **If session invalid**: Performs full login and saves new cookies
 5. **On shutdown**: Cookies are saved for next startup

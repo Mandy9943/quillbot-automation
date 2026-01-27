@@ -9,7 +9,6 @@ services:
       - QUILLBOT_PASSWORD=${QUILLBOT_PASSWORD}
       - HEADLESS=true
       - PORT=3090
-      - BROWSER_DATA_DIR=/app/browser-data
       - SESSIONS_DIR=/app/sessions
     expose:
       - 3090
@@ -19,11 +18,9 @@ services:
     # Security options for running Chrome in container
     cap_add:
       - SYS_ADMIN
-    # Persistent storage for session data
+    # Persistent storage for session cookies
     volumes:
-      - browser-data:/app/browser-data
       - sessions-data:/app/sessions
 
 volumes:
-  browser-data:
   sessions-data:
