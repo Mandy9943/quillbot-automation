@@ -11,7 +11,6 @@ const LOGIN_URL = "https://quillbot.com/login";
 
 // Session persistence paths (configurable via environment variables)
 const SESSIONS_DIR = process.env.SESSIONS_DIR || "./sessions";
-const COOKIES_FILE = path.join(SESSIONS_DIR, "cookies.json");
 const PARAPHRASER_URL = "https://quillbot.com/paraphrasing-tool";
 
 const SELECTORS = {
@@ -54,6 +53,7 @@ export interface ParaphraseResult {
 export interface QuillBotAutomationOptions {
   email: string;
   password: string;
+  accountId: string;
   headless?: boolean;
   timeout?: number;
   /** Optional override (ms) for waiting the spinner to disappear. Use 0 for no timeout. */
@@ -67,13 +67,23 @@ export class QuillBotAutomation {
   private taskQueue: Promise<unknown> = Promise.resolve();
   private readonly timeout: number;
   private readonly loaderWaitTimeout: number;
+  private readonly cookiesFile: string;
   private cookieConsentHandled = false;
   private browserFailed = false;
   private isRestarting = false;
 
+  public readonly accountId: string;
+
   constructor(private readonly options: QuillBotAutomationOptions) {
     this.timeout = options.timeout ?? 30000;
     this.loaderWaitTimeout = options.loaderWaitTimeout ?? 0;
+    this.accountId = options.accountId;
+    // Per-account cookie path: sessions/{accountId}/cookies.json
+    this.cookiesFile = path.join(
+      SESSIONS_DIR,
+      options.accountId,
+      "cookies.json",
+    );
   }
 
   async init(): Promise<void> {
@@ -102,12 +112,15 @@ export class QuillBotAutomation {
   }
 
   /**
-   * Ensures session directories exist
+   * Ensures session directories exist for this account
    */
   private ensureDirectoriesExist(): void {
-    if (!fs.existsSync(SESSIONS_DIR)) {
-      fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-      console.log(`Created sessions directory: ${SESSIONS_DIR}`);
+    const accountDir = path.dirname(this.cookiesFile);
+    if (!fs.existsSync(accountDir)) {
+      fs.mkdirSync(accountDir, { recursive: true });
+      console.log(
+        `[${this.accountId}] Created sessions directory: ${accountDir}`,
+      );
     }
   }
 
@@ -116,17 +129,21 @@ export class QuillBotAutomation {
    */
   async saveCookies(): Promise<void> {
     if (!this.page) {
-      console.log("No page available, skipping cookie save");
+      console.log(
+        `[${this.accountId}] No page available, skipping cookie save`,
+      );
       return;
     }
 
     try {
       const cookies = await this.page.cookies();
       this.ensureDirectoriesExist();
-      fs.writeFileSync(COOKIES_FILE, JSON.stringify(cookies, null, 2));
-      console.log(`Saved ${cookies.length} cookies to ${COOKIES_FILE}`);
+      fs.writeFileSync(this.cookiesFile, JSON.stringify(cookies, null, 2));
+      console.log(
+        `[${this.accountId}] Saved ${cookies.length} cookies to ${this.cookiesFile}`,
+      );
     } catch (error) {
-      console.error("Failed to save cookies:", error);
+      console.error(`[${this.accountId}] Failed to save cookies:`, error);
     }
   }
 
@@ -136,29 +153,33 @@ export class QuillBotAutomation {
    */
   async loadCookies(): Promise<boolean> {
     if (!this.page) {
-      console.log("No page available, skipping cookie load");
+      console.log(
+        `[${this.accountId}] No page available, skipping cookie load`,
+      );
       return false;
     }
 
     try {
-      if (!fs.existsSync(COOKIES_FILE)) {
-        console.log("No saved cookies found");
+      if (!fs.existsSync(this.cookiesFile)) {
+        console.log(`[${this.accountId}] No saved cookies found`);
         return false;
       }
 
-      const cookiesData = fs.readFileSync(COOKIES_FILE, "utf-8");
+      const cookiesData = fs.readFileSync(this.cookiesFile, "utf-8");
       const cookies: CookieParam[] = JSON.parse(cookiesData);
 
       if (!Array.isArray(cookies) || cookies.length === 0) {
-        console.log("Cookie file is empty or invalid");
+        console.log(`[${this.accountId}] Cookie file is empty or invalid`);
         return false;
       }
 
       await this.page.setCookie(...cookies);
-      console.log(`Loaded ${cookies.length} cookies from ${COOKIES_FILE}`);
+      console.log(
+        `[${this.accountId}] Loaded ${cookies.length} cookies from ${this.cookiesFile}`,
+      );
       return true;
     } catch (error) {
-      console.error("Failed to load cookies:", error);
+      console.error(`[${this.accountId}] Failed to load cookies:`, error);
       return false;
     }
   }
@@ -171,7 +192,7 @@ export class QuillBotAutomation {
     if (!this.page) return false;
 
     try {
-      console.log("Checking if already logged in...");
+      console.log(`[${this.accountId}] Checking if already logged in...`);
 
       // Navigate to settings page - this requires authentication
       // If we get redirected to login, we're not logged in
@@ -187,12 +208,14 @@ export class QuillBotAutomation {
 
       const currentUrl = this.page.url();
       console.log(
-        `Login check - navigated to settings, current URL: ${currentUrl}`,
+        `[${this.accountId}] Login check - navigated to settings, current URL: ${currentUrl}`,
       );
 
       // If we're still on settings page (not redirected to login), we're logged in
       if (currentUrl.includes("/settings")) {
-        console.log("Settings page accessible - user is logged in!");
+        console.log(
+          `[${this.accountId}] Settings page accessible - user is logged in!`,
+        );
 
         // Navigate to paraphraser for actual use
         await this.page.goto(PARAPHRASER_URL, {
@@ -206,16 +229,18 @@ export class QuillBotAutomation {
       // If redirected to login page, we're not logged in
       if (currentUrl.includes("/login")) {
         console.log(
-          "Redirected to login page - session expired or not logged in",
+          `[${this.accountId}] Redirected to login page - session expired or not logged in`,
         );
         return false;
       }
 
       // Any other redirect means we're probably not logged in
-      console.log("Unexpected redirect - assuming not logged in");
+      console.log(
+        `[${this.accountId}] Unexpected redirect - assuming not logged in`,
+      );
       return false;
     } catch (error) {
-      console.log("Error checking login status:", error);
+      console.log(`[${this.accountId}] Error checking login status:`, error);
       return false;
     }
   }
@@ -466,17 +491,19 @@ export class QuillBotAutomation {
           await this.closePremiumModalIfPresent(page);
           await this.handleCookieConsent(page);
           await this.ensureMode(page, SELECTORS.firstModeTab);
-          console.log("Session restored from cookies - skipping login!");
+          console.log(
+            `[${this.accountId}] Session restored from cookies - skipping login!`,
+          );
           return;
         }
 
         console.log(
-          "Saved cookies exist but session invalid, performing fresh login...",
+          `[${this.accountId}] Saved cookies exist but session invalid, performing fresh login...`,
         );
       }
 
       // Full login flow - no valid session found
-      console.log("Performing full login...");
+      console.log(`[${this.accountId}] Performing full login...`);
 
       // Retry navigation with exponential backoff
       let loginSuccess = false;
@@ -495,7 +522,9 @@ export class QuillBotAutomation {
           if (retries >= maxRetries) {
             throw error;
           }
-          console.log(`Navigation failed, retry ${retries}/${maxRetries}...`);
+          console.log(
+            `[${this.accountId}] Navigation failed, retry ${retries}/${maxRetries}...`,
+          );
           await this.delay(2000 * retries); // Exponential backoff
         }
       }
@@ -516,7 +545,7 @@ export class QuillBotAutomation {
         this.timeout,
       );
 
-      console.log("loginButton");
+      console.log(`[${this.accountId}] loginButton found`);
 
       // Ensure cookie banner is gone before clicking login
       await this.handleCookieConsent(page);
@@ -531,7 +560,7 @@ export class QuillBotAutomation {
         });
       } catch {
         console.log(
-          "Login navigation wait timed out, checking if we are redirected...",
+          `[${this.accountId}] Login navigation wait timed out, checking if we are redirected...`,
         );
       }
 
@@ -542,7 +571,7 @@ export class QuillBotAutomation {
         currentUrl.includes("google.com")
       ) {
         throw new Error(
-          `Login failed: Redirected to social login page (${currentUrl})`,
+          `[${this.accountId}] Login failed: Redirected to social login page (${currentUrl})`,
         );
       }
 
@@ -554,7 +583,7 @@ export class QuillBotAutomation {
           ),
         );
         if (error) {
-          throw new Error(`Login failed: ${error[0]}`);
+          throw new Error(`[${this.accountId}] Login failed: ${error[0]}`);
         }
       }
 
@@ -575,7 +604,7 @@ export class QuillBotAutomation {
             throw error;
           }
           console.log(
-            `Paraphraser page navigation failed, retry ${retries}/${maxRetries}...`,
+            `[${this.accountId}] Paraphraser page navigation failed, retry ${retries}/${maxRetries}...`,
           );
           await this.delay(2000 * retries);
         }
@@ -587,7 +616,9 @@ export class QuillBotAutomation {
 
       // Save cookies after successful login for future session restoration
       await this.saveCookies();
-      console.log("Login successful - cookies saved for session persistence");
+      console.log(
+        `[${this.accountId}] Login successful - cookies saved for session persistence`,
+      );
     } catch (error) {
       await this.dispose();
       throw error;
@@ -973,8 +1004,51 @@ export class QuillBotAutomation {
     }
   }
 
-  private async readClipboard(page: Page): Promise<string> {
+  /**
+   * Extract paraphrased text directly from the output area DOM
+   * This avoids clipboard sharing issues when running multiple browser instances
+   */
+  private async readOutputText(page: Page): Promise<string> {
+    const outputSelectors = [
+      '#paraphraser-output-box [data-testid="pphr/output_box/contenteditable"]',
+      "#paraphraser-output-box .ql-editor",
+      '#paraphraser-output-box [contenteditable="false"]',
+      "#paraphraser-output-box",
+      '[data-testid="pphr/output_box"]',
+    ];
+
+    for (const selector of outputSelectors) {
+      try {
+        const element = await page.$(selector);
+        if (element) {
+          const text = await page.evaluate((el) => {
+            // Try to get innerText first, fallback to textContent
+            return (
+              (el as HTMLElement).innerText ||
+              (el as HTMLElement).textContent ||
+              ""
+            );
+          }, element);
+
+          if (text && text.trim().length > 0) {
+            this.log("output", `Extracted text using selector: ${selector}`);
+            return text.trim();
+          }
+        }
+      } catch {
+        // Try next selector
+      }
+    }
+
+    // Fallback to clipboard if DOM extraction fails
+    this.log("output", "DOM extraction failed, falling back to clipboard");
     return page.evaluate(async () => navigator.clipboard.readText());
+  }
+
+  private async readClipboard(page: Page): Promise<string> {
+    // Use DOM extraction instead of clipboard to avoid race conditions
+    // when multiple browser instances run in parallel
+    return this.readOutputText(page);
   }
 
   private async closePremiumModalIfPresent(page: Page): Promise<void> {
@@ -1037,7 +1111,7 @@ export class QuillBotAutomation {
   }
 
   private log(context: string, message: string): void {
-    console.log(`${message}`);
+    console.log(`[${this.accountId}] [${context}] ${message}`);
   }
 
   private async waitForLoaderToDisappear(

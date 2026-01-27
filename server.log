@@ -1,0 +1,142 @@
+nohup: ignoring input
+
+> quillbot-automation@1.0.0 dev
+> ts-node src/server.ts
+
+[dotenv@17.2.3] injecting env (3) from .env -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+Configured accounts: armandoc9943@gmail.com, salut@paylinks.ro, bucur.andrei.teodor@gmail.com
+Headless mode: true
+Initializing all account workers in parallel...
+[acc1] Initializing worker...
+[acc2] Initializing worker...
+[acc3] Initializing worker...
+Express API listening on http://localhost:3090
+[acc1] Loaded 33 cookies from sessions/acc1/cookies.json
+[acc1] Checking if already logged in...
+[acc2] Loaded 33 cookies from sessions/acc2/cookies.json
+[acc2] Checking if already logged in...
+[acc3] Loaded 33 cookies from sessions/acc3/cookies.json
+[acc3] Checking if already logg[acc1] Lo[acc1] Login check - navigated to settings, current URL: https://quillbot.com/login
+[acc1] Redirected to login page - session expired or not logged in
+[acc1] Saved cookies exist but session invalid, performing fresh login...
+[acc1] Performing full login...
+[acc2] Login check - navigated to settings, current URL: https://quillbot.com/login
+[acc2] Redirected to login page - session expired or not logged in
+[acc2] Saved cookies exist but session invalid, performing fresh login...
+[acc2] Performing full login...
+[acc3] Login check - navigated to settings, current URL: https://quillbot.com/login
+[acc3] Redirected to login page - session expired or not logged in
+[acc3] Saved cookies exist but session invalid, performing fresh login...
+[acc3] Performing full login...
+Current page state - URL: https://quillbot.com/login, Title: Log In | QuillBot AI
+[acc1] loginButton found
+Current page state - URL: https://quillbot.com/login, Title: Log In | QuillBot AI
+Current page state - URL: https://quillbot.com/login, Title: Log In | QuillBot AI
+[acc3] loginButton found
+[acc2] loginButton found
+Current page state - URL: https://quillbot.com/login, Title: Log In | QuillBot AI
+Current page state - URL: https://quillbot.com/login, Title: Log In | QuillBot AI
+Current page state - URL: https://quillbot.com/login, Title: Log In | QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Just a moment...
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Just a moment...
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Just a moment...
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Just a moment...
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] Saved 33 cookies to sessions/acc1/cookies.json
+[acc1] Login successful - cookies saved for session persistence
+[acc1] Worker ready
+[acc3] Saved 33 cookies to sessions/acc3/cookies.json
+[acc3] Login successful - cookies saved for session persistence
+[acc3] Worker ready
+[acc2] Saved 33 cookies to sessions/acc2/cookies.json
+[acc2] Login successful - cookies saved for session persistence
+[acc2] Worker ready
+Account pool ready: 3/3 workers initialized
+Account pool initialized and ready to accept requests.
+unt pool initialized and ready to accept requests.
+Received batch request (mode=standard): acc1=50 chars, acc2=36 chars, acc3=29 chars
+[acc1] [batch-1769548402481-acc1] Queued standard mode request (length: 50 chars)
+[acc2] [batch-1769548402481-acc2] Queued standard mode request (length: 36 chars)
+[acc3] [batch-1769548402481-acc3] Queued standard mode request (length: 29 chars)
+[acc1] [batch-1769548402481-acc1] Starting standard mode flow
+[acc1] [batch-1769548402481-acc1] Standard mode: ensuring tab active
+[acc2] [batch-1769548402481-acc2] Starting standard mode flow
+[acc2] [batch-1769548402481-acc2] Standard mode: ensuring tab active
+[acc3] [batch-1769548402481-acc3] Starting standard mode flow
+[acc3] [batch-1769548402481-acc3] Standard mode: ensuring tab active
+[acc2] [batch-1769548402481-acc2] Standard mode: filling input
+[acc1] [batch-1769548402481-acc1] Standard mode: filling input
+[acc3] [batch-1769548402481-acc3] Standard mode: filling input
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc2] [batch-1769548402481-acc2] Standard mode: clicking paraphrase
+Paraphrase button found: disabled=false, visible=true
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] [batch-1769548402481-acc1] Standard mode: clicking paraphrase
+Paraphrase button found: disabled=false, visible=true
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc3] [batch-1769548402481-acc3] Standard mode: clicking paraphrase
+Paraphrase button found: disabled=false, visible=true
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc3] [batch-1769548402481-acc3] Standard mode: copying result
+[acc2] [batch-1769548402481-acc2] Standard mode: copying result
+[acc1] [batch-1769548402481-acc1] Standard mode: copying result
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc3] [output] Extracted text using selector: #paraphraser-output-box
+[acc3] [batch-1769548402481-acc3] Standard mode: clipboard captured
+[acc3] [batch-1769548402481-acc3] Resetting page state after Mode 2
+[acc3] [batch-1769548402481-acc3] Standard mode complete
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc2] [output] Extracted text using selector: #paraphraser-output-box
+[acc2] [batch-1769548402481-acc2] Standard mode: clipboard captured
+[acc2] [batch-1769548402481-acc2] Resetting page state after Mode 2
+[acc2] [batch-1769548402481-acc2] Standard mode complete
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] [output] Extracted text using selector: #paraphraser-output-box
+[acc1] [batch-1769548402481-acc1] Standard mode: clipboard captured
+[acc1] [batch-1769548402481-acc1] Resetting page state after Mode 2
+[acc1] [batch-1769548402481-acc1] Standard mode complete
+Batch request completed
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Received batch request (mode=dual): acc1=12 chars, acc2=none, acc3=none
+[acc1] [batch-1769548763783-acc1] Queued request (length: 12 chars)
+[acc1] [batch-1769548763783-acc1] Starting mode 1 flow
+[acc1] [batch-1769548763783-acc1] Mode 1: ensuring tab active
+[acc1] [batch-1769548763783-acc1] Mode 1: filling input
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] [batch-1769548763783-acc1] Mode 1: clicking paraphrase
+Paraphrase button found: disabled=false, visible=true
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] [batch-1769548763783-acc1] Mode 1: copying result
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] [output] Extracted text using selector: #paraphraser-output-box
+[acc1] [batch-1769548763783-acc1] Mode 1: clipboard captured
+[acc1] [batch-1769548763783-acc1] Mode 1 complete, starting mode 2 flow
+[acc1] [batch-1769548763783-acc1] Mode 2: Reloading page to ensure fresh state
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] [batch-1769548763783-acc1] Mode 2: switching tab
+[acc1] [batch-1769548763783-acc1] Mode 2: filling input
+[acc1] [batch-1769548763783-acc1] Mode 2: clicking paraphrase
+Paraphrase button found: disabled=false, visible=true
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] [batch-1769548763783-acc1] Mode 2: copying result
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+[acc1] [output] Extracted text using selector: #paraphraser-output-box
+[acc1] [batch-1769548763783-acc1] Mode 2: clipboard captured
+[acc1] [batch-1769548763783-acc1] Resetting page state after Mode 2
+[acc1] [batch-1769548763783-acc1] Mode 2 complete
+Batch request completed
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI

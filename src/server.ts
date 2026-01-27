@@ -1,37 +1,57 @@
 import cors from "cors";
-import { randomUUID } from "crypto";
 import dotenv from "dotenv";
 import express, { Request, Response } from "express";
-import { performance } from "node:perf_hooks";
+import * as fs from "fs";
+import * as path from "path";
 
-import { ParaphraseResult, QuillBotAutomation } from "./quillbotAutomation";
+import { AccountPool, BatchRequest } from "./accountPool";
+import { AccountConfig } from "./accountWorker";
 
 dotenv.config();
 
-const email = process.env.QUILLBOT_EMAIL;
-const password = process.env.QUILLBOT_PASSWORD;
-const headless = process.env.HEADLESS !== "false";
-const port = Number(process.env.PORT ?? 3000);
-
-if (!email || !password) {
+// Parse accounts from environment variable
+const accountsJson = process.env.QUILLBOT_ACCOUNTS;
+if (!accountsJson) {
   console.error(
-    "QUILLBOT_EMAIL and QUILLBOT_PASSWORD must be set in environment variables.",
+    "QUILLBOT_ACCOUNTS must be set as a JSON array in environment variables.",
+  );
+  console.error(
+    'Example: QUILLBOT_ACCOUNTS=[{"email":"a@x.com","password":"pass1"},{"email":"b@x.com","password":"pass2"},{"email":"c@x.com","password":"pass3"}]',
   );
   process.exit(1);
 }
 
-const automation = new QuillBotAutomation({ email, password, headless });
-let isReady = false;
-let isRestarting = false;
+let accounts: AccountConfig[];
+try {
+  accounts = JSON.parse(accountsJson);
+  if (!Array.isArray(accounts) || accounts.length !== 3) {
+    throw new Error("QUILLBOT_ACCOUNTS must contain exactly 3 accounts");
+  }
+  for (let i = 0; i < accounts.length; i++) {
+    if (!accounts[i].email || !accounts[i].password) {
+      throw new Error(`Account ${i + 1} is missing email or password`);
+    }
+  }
+} catch (error) {
+  console.error("Failed to parse QUILLBOT_ACCOUNTS:", error);
+  process.exit(1);
+}
 
-const readyPromise = automation
-  .init()
+const headless = process.env.HEADLESS !== "false";
+const port = Number(process.env.PORT ?? 3000);
+
+console.log(`Configured accounts: ${accounts.map((a) => a.email).join(", ")}`);
+console.log(`Headless mode: ${headless}`);
+
+const pool = new AccountPool(accounts, headless);
+
+const readyPromise = pool
+  .initAll()
   .then(() => {
-    isReady = true;
-    console.log("QuillBot session initialized and ready to accept requests.");
+    console.log("Account pool initialized and ready to accept requests.");
   })
   .catch((error) => {
-    console.error("Unable to initialize QuillBot session:", error);
+    console.error("Unable to initialize account pool:", error);
     process.exit(1);
   });
 
@@ -39,13 +59,19 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
+// Health check
 app.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", ready: isReady, restarting: isRestarting });
+  const status = pool.getStatus();
+  res.json({ status: "ok", ...status });
 });
 
+// Status endpoint - shows state of each account
+app.get("/status", (_req: Request, res: Response) => {
+  res.json(pool.getStatus());
+});
+
+// Debug endpoints
 app.get("/debug/screenshot", (_req: Request, res: Response) => {
-  const path = require("path");
-  const fs = require("fs");
   const screenshotPath = path.resolve("error_screenshot.png");
 
   if (fs.existsSync(screenshotPath)) {
@@ -56,8 +82,6 @@ app.get("/debug/screenshot", (_req: Request, res: Response) => {
 });
 
 app.get("/debug/list-screenshots", (_req: Request, res: Response) => {
-  const fs = require("fs");
-  const path = require("path");
   const dir = process.cwd();
 
   try {
@@ -73,7 +97,10 @@ app.get("/debug/list-screenshots", (_req: Request, res: Response) => {
         url: `/debug/view/${file}`,
         time: fs.statSync(path.join(dir, file)).mtime,
       }))
-      .sort((a: any, b: any) => b.time - a.time);
+      .sort(
+        (a: { time: Date }, b: { time: Date }) =>
+          b.time.getTime() - a.time.getTime(),
+      );
 
     res.json(files);
   } catch (e) {
@@ -84,8 +111,6 @@ app.get("/debug/list-screenshots", (_req: Request, res: Response) => {
 app.get(
   "/debug/view/:filename",
   (req: Request<{ filename: string }>, res: Response) => {
-    const path = require("path");
-    const fs = require("fs");
     const filename = req.params.filename;
 
     if (typeof filename !== "string") {
@@ -110,129 +135,116 @@ app.get(
   },
 );
 
-app.post("/paraphrase", async (req: Request, res: Response) => {
-  if (!isReady || isRestarting) {
+/**
+ * Batch paraphrase endpoint
+ *
+ * Request body: {
+ *   acc1?: string,
+ *   acc2?: string,
+ *   acc3?: string,
+ *   mode?: "dual" | "standard"  // "dual" = Simple→Shorten (default), "standard" = Standard mode only
+ * }
+ * At least one account text must be provided.
+ *
+ * Response: {
+ *   acc1?: { result?: string, firstMode?: string, secondMode?: string, durationMs: number, error?: string, fallbackUsed?: string },
+ *   acc2?: { ... },
+ *   acc3?: { ... }
+ * }
+ *
+ * For mode="dual": Returns firstMode and secondMode
+ * For mode="standard": Returns result
+ */
+app.post("/paraphrase-batch", async (req: Request, res: Response) => {
+  if (!pool.isReady) {
     return res.status(503).json({
-      error:
-        "Browser is not ready. Please wait for initialization or restart to complete.",
-      ready: isReady,
-      restarting: isRestarting,
+      error: "Account pool is not ready. Please wait for initialization.",
+      ...pool.getStatus(),
     });
   }
 
-  const { text } = req.body ?? {};
-  if (typeof text !== "string" || !text.trim()) {
-    return res
-      .status(400)
-      .json({ error: "Field 'text' must be a non-empty string." });
+  const { acc1, acc2, acc3, mode } = req.body ?? {};
+
+  // Validate mode
+  const validModes = ["dual", "standard"];
+  if (mode && !validModes.includes(mode)) {
+    return res.status(400).json({
+      error: `Invalid mode. Must be one of: ${validModes.join(", ")}`,
+    });
   }
 
-  const requestId = randomUUID();
-  const startTime = performance.now();
+  // Validate input
+  const hasAcc1 = typeof acc1 === "string" && acc1.trim().length > 0;
+  const hasAcc2 = typeof acc2 === "string" && acc2.trim().length > 0;
+  const hasAcc3 = typeof acc3 === "string" && acc3.trim().length > 0;
+
+  if (!hasAcc1 && !hasAcc2 && !hasAcc3) {
+    return res.status(400).json({
+      error: "At least one of acc1, acc2, or acc3 must be a non-empty string.",
+    });
+  }
+
+  const request: BatchRequest = { mode: mode || "dual" };
+  if (hasAcc1) request.acc1 = acc1;
+  if (hasAcc2) request.acc2 = acc2;
+  if (hasAcc3) request.acc3 = acc3;
+
   console.log(
-    `[${requestId}] Received paraphrase request (length: ${text.length})`,
+    `Received batch request (mode=${mode || "dual"}): acc1=${hasAcc1 ? acc1.length + " chars" : "none"}, acc2=${hasAcc2 ? acc2.length + " chars" : "none"}, acc3=${hasAcc3 ? acc3.length + " chars" : "none"}`,
   );
 
   try {
     await readyPromise;
-    const result: ParaphraseResult = await automation.paraphrase(
-      text,
-      requestId,
-    );
-    const durationMs = Math.round(performance.now() - startTime);
-    console.log(`[${requestId}] Paraphrase completed in ${durationMs} ms`);
-    res.json({
-      inputLength: text.length,
-      firstMode: result.firstMode,
-      secondMode: result.secondMode,
-      durationMs,
-    });
+    const response = await pool.processBatch(request);
+    console.log("Batch request completed");
+    res.json(response);
   } catch (error) {
-    const durationMs = Math.round(performance.now() - startTime);
-    console.error("Paraphrasing request failed:", error);
-    console.error(`[${requestId}] Request failed after ${durationMs} ms`);
-    res
-      .status(500)
-      .json({ error: "Failed to process paraphrasing request.", durationMs });
-  }
-});
-
-app.post("/paraphrase-standard", async (req: Request, res: Response) => {
-  if (!isReady || isRestarting) {
-    return res.status(503).json({
-      error:
-        "Browser is not ready. Please wait for initialization or restart to complete.",
-      ready: isReady,
-      restarting: isRestarting,
-    });
-  }
-
-  const { text } = req.body ?? {};
-  if (typeof text !== "string" || !text.trim()) {
-    return res
-      .status(400)
-      .json({ error: "Field 'text' must be a non-empty string." });
-  }
-
-  const requestId = randomUUID();
-  const startTime = performance.now();
-  console.log(
-    `[${requestId}] Received standard mode paraphrase request (length: ${text.length})`,
-  );
-
-  try {
-    await readyPromise;
-    const result: string = await automation.paraphraseStandardMode(
-      text,
-      requestId,
-    );
-    const durationMs = Math.round(performance.now() - startTime);
-    console.log(
-      `[${requestId}] Standard mode paraphrase completed in ${durationMs} ms`,
-    );
-    res.json({
-      inputLength: text.length,
-      output: result,
-      durationMs,
-    });
-  } catch (error) {
-    const durationMs = Math.round(performance.now() - startTime);
-    console.error("Standard mode paraphrasing request failed:", error);
-    console.error(`[${requestId}] Request failed after ${durationMs} ms`);
+    console.error("Batch request failed:", error);
     res.status(500).json({
-      error: "Failed to process standard mode paraphrasing request.",
-      durationMs,
+      error: "Failed to process batch request.",
+      details: error instanceof Error ? error.message : String(error),
     });
   }
 });
 
+// Restart all workers
 app.post("/restart", async (_req: Request, res: Response) => {
-  if (isRestarting) {
-    return res.status(409).json({
-      error: "Browser restart already in progress. Please wait.",
-      restarting: true,
-    });
-  }
-
-  console.log("Restart requested - disposing current browser session...");
-  isRestarting = true;
-  isReady = false;
+  console.log("Restart requested for all workers...");
 
   try {
-    await automation.dispose();
-    console.log("Browser disposed, reinitializing...");
-
-    await automation.init();
-    isReady = true;
-    isRestarting = false;
-    console.log("Browser restarted and ready.");
-
-    res.json({ status: "ok", message: "Browser restarted successfully" });
+    await pool.restartAll();
+    res.json({ status: "ok", message: "All workers restarted successfully" });
   } catch (error) {
     console.error("Restart failed:", error);
-    isRestarting = false;
     res.status(500).json({
-      error: "Failed to restart browser",
+      error: "Failed to restart workers",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+// Restart specific worker
+app.post("/restart/:accountId", async (req: Request, res: Response) => {
+  const { accountId } = req.params;
+
+  if (!["acc1", "acc2", "acc3"].includes(accountId)) {
+    return res.status(400).json({
+      error: "Invalid accountId. Must be acc1, acc2, or acc3.",
+    });
+  }
+
+  console.log(`Restart requested for ${accountId}...`);
+
+  try {
+    await pool.restartWorker(accountId);
+    res.json({
+      status: "ok",
+      message: `Worker ${accountId} restarted successfully`,
+    });
+  } catch (error) {
+    console.error(`Restart of ${accountId} failed:`, error);
+    res.status(500).json({
+      error: `Failed to restart worker ${accountId}`,
       details: error instanceof Error ? error.message : String(error),
     });
   }
@@ -248,13 +260,13 @@ const shutdown = async () => {
   // Save cookies before disposing to preserve session for next startup
   try {
     console.log("Saving session cookies before shutdown...");
-    await automation.saveCookies();
+    await pool.saveAllCookies();
   } catch (error) {
     console.error("Failed to save cookies on shutdown:", error);
   }
 
   server.close();
-  await automation.dispose();
+  await pool.disposeAll();
   process.exit(0);
 };
 
