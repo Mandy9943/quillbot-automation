@@ -117,6 +117,25 @@ export class QuillBotAutomation {
   }
 
   /**
+   * Clean up stale Chrome lock files that can prevent browser launch after ungraceful shutdown
+   */
+  private cleanupBrowserLocks(): void {
+    const lockFiles = ["SingletonLock", "SingletonCookie", "SingletonSocket"];
+
+    for (const lockFile of lockFiles) {
+      const lockPath = path.join(BROWSER_DATA_DIR, lockFile);
+      try {
+        if (fs.existsSync(lockPath)) {
+          fs.unlinkSync(lockPath);
+          console.log(`Removed stale lock file: ${lockPath}`);
+        }
+      } catch (error) {
+        console.warn(`Failed to remove lock file ${lockPath}:`, error);
+      }
+    }
+  }
+
+  /**
    * Save cookies to file for session persistence
    */
   async saveCookies(): Promise<void> {
@@ -404,6 +423,9 @@ export class QuillBotAutomation {
   private async setup(): Promise<void> {
     // Ensure session directories exist
     this.ensureDirectoriesExist();
+
+    // Clean up stale lock files from previous ungraceful shutdowns
+    this.cleanupBrowserLocks();
 
     try {
       this.browser = await puppeteer.launch({

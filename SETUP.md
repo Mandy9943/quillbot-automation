@@ -100,6 +100,21 @@ Session restored from cookies - skipping login!
 
 ## Troubleshooting
 
+### "Profile appears to be in use by another Chromium process" error
+
+This happens when Chrome's lock files persist after an ungraceful shutdown. The app now **automatically cleans up** these lock files on startup. You should see in logs:
+
+```
+Removed stale lock file: /app/browser-data/SingletonLock
+```
+
+If you still see this error, manually clean the locks:
+
+```bash
+# In Coolify Terminal or container shell
+rm -f /app/browser-data/SingletonLock /app/browser-data/SingletonCookie /app/browser-data/SingletonSocket
+```
+
 ### Session not persisting after redeploy
 
 - Make sure you're using **"Restart"** not **"Redeploy"** for quick restarts
