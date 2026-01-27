@@ -118,6 +118,7 @@ export class QuillBotAutomation {
 
   /**
    * Clean up stale Chrome lock files that can prevent browser launch after ungraceful shutdown
+   * If lock files persist, delete the entire browser data directory as a last resort
    */
   private cleanupBrowserLocks(): void {
     console.log("Cleaning up stale browser lock files...");
@@ -128,35 +129,42 @@ export class QuillBotAutomation {
       "SingletonCookie",
       "SingletonSocket",
     ];
-    const dirsToCheck = [
-      BROWSER_DATA_DIR,
-      path.join(BROWSER_DATA_DIR, "Default"),
-      path.join(BROWSER_DATA_DIR, "SingletonLock"), // Sometimes it's a directory
-    ];
 
-    for (const dir of dirsToCheck) {
-      // Check if it's a file (sometimes SingletonLock is a symlink/file at root)
-      if (fs.existsSync(dir) && fs.lstatSync(dir).isFile()) {
-        try {
-          fs.unlinkSync(dir);
-          console.log(`Removed stale lock file: ${dir}`);
-        } catch (error) {
-          console.warn(`Failed to remove lock file ${dir}:`, error);
+    let lockFilesFound = false;
+
+    // First, try to remove lock files from root
+    for (const lockFile of lockFileNames) {
+      const lockPath = path.join(BROWSER_DATA_DIR, lockFile);
+      try {
+        if (fs.existsSync(lockPath)) {
+          lockFilesFound = true;
+          const stat = fs.lstatSync(lockPath);
+          if (stat.isSymbolicLink()) {
+            fs.unlinkSync(lockPath);
+            console.log(`Removed stale lock symlink: ${lockPath}`);
+          } else if (stat.isFile()) {
+            fs.unlinkSync(lockPath);
+            console.log(`Removed stale lock file: ${lockPath}`);
+          } else if (stat.isDirectory()) {
+            fs.rmSync(lockPath, { recursive: true, force: true });
+            console.log(`Removed stale lock directory: ${lockPath}`);
+          }
         }
-        continue;
+      } catch (error) {
+        console.warn(`Failed to remove lock file ${lockPath}:`, error);
       }
+    }
 
-      if (!fs.existsSync(dir)) continue;
-
+    // Also check Default subdirectory
+    const defaultDir = path.join(BROWSER_DATA_DIR, "Default");
+    if (fs.existsSync(defaultDir)) {
       for (const lockFile of lockFileNames) {
-        const lockPath = path.join(dir, lockFile);
+        const lockPath = path.join(defaultDir, lockFile);
         try {
           if (fs.existsSync(lockPath)) {
-            const stat = fs.lstatSync(lockPath);
-            if (stat.isFile() || stat.isSymbolicLink()) {
-              fs.unlinkSync(lockPath);
-              console.log(`Removed stale lock file: ${lockPath}`);
-            }
+            lockFilesFound = true;
+            fs.rmSync(lockPath, { recursive: true, force: true });
+            console.log(`Removed stale lock from Default: ${lockPath}`);
           }
         } catch (error) {
           console.warn(`Failed to remove lock file ${lockPath}:`, error);
@@ -164,15 +172,19 @@ export class QuillBotAutomation {
       }
     }
 
-    // Also try to remove any leftover lock file at the exact path Chrome mentions
-    const chromeProfileLockPath = path.join(BROWSER_DATA_DIR, "SingletonLock");
-    try {
-      if (fs.existsSync(chromeProfileLockPath)) {
-        fs.unlinkSync(chromeProfileLockPath);
-        console.log(`Removed Chrome profile lock: ${chromeProfileLockPath}`);
+    // If we found lock files, there might be corruption - clear the entire directory
+    // This ensures a clean start but will require re-login
+    if (lockFilesFound) {
+      console.log(
+        "Lock files were found - clearing entire browser data directory to ensure clean start...",
+      );
+      try {
+        fs.rmSync(BROWSER_DATA_DIR, { recursive: true, force: true });
+        fs.mkdirSync(BROWSER_DATA_DIR, { recursive: true });
+        console.log("Browser data directory cleared and recreated");
+      } catch (error) {
+        console.error("Failed to clear browser data directory:", error);
       }
-    } catch (error) {
-      // Ignore - might already be removed
     }
 
     console.log("Browser lock cleanup complete");
