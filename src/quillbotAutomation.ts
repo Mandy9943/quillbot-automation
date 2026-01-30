@@ -676,7 +676,7 @@ export class QuillBotAutomation {
           context,
           `Mode 1: Click attempt ${i + 1} failed to trigger action, retrying...`,
         );
-        
+
         // After first failure, refresh page to fix potential React state corruption
         if (i === 0) {
           this.log(context, "Mode 1: Refreshing page before retry...");
@@ -750,7 +750,7 @@ export class QuillBotAutomation {
         break;
       } catch {
         this.log(context, `Mode 2: Click attempt ${i + 1} failed, retrying...`);
-        
+
         // After first failure, refresh page to fix potential React state corruption
         if (i === 0) {
           this.log(context, "Mode 2: Refreshing page before retry...");
@@ -826,7 +826,7 @@ export class QuillBotAutomation {
             i + 1
           } failed to trigger action, retrying...`,
         );
-        
+
         // After first failure, refresh page to fix potential React state corruption
         if (i === 0) {
           this.log(context, "Standard mode: Refreshing page before retry...");
