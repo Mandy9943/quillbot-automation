@@ -37,7 +37,11 @@ const SELECTORS = {
     "#controlledInputBoxContainer > div.MuiBox-root.css-1buxzwp > div > div.MuiBox-root.css-1s1ozo1 > span > div > button",
   ],
   copyButton: ['[data-testid="pphr/output_footer/copy_text_button"]'],
-  loadingIndicator: ["#mui-2401 > div", ".MuiLoadingButton-loadingIndicator"],
+  loadingIndicator: [
+    ".MuiLoadingButton-loadingIndicator",
+    "button[aria-busy='true']",
+    "[data-testid='pphr/input_footer/paraphrase_button'] .MuiCircularProgress-root",
+  ],
   cookieConsent: [
     "#onetrust-accept-btn-handler",
     "#onetrust-reject-all-handler",
@@ -646,7 +650,9 @@ export class QuillBotAutomation {
     this.log(context, "Mode 1: clicking paraphrase");
 
     let clickSuccess = false;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
+      // Add random jitter to desynchronize parallel accounts (100-400ms)
+      await this.randomDelay(100, 400);
       await this.triggerParaphrase(page);
 
       // Wait for either loader or result to appear to confirm click worked
@@ -659,7 +665,7 @@ export class QuillBotAutomation {
             const isDone = copySelectors.some((s) => document.querySelector(s));
             return isLoading || isDone;
           },
-          { timeout: 40000 },
+          { timeout: 10000 },
           SELECTORS.loadingIndicator,
           SELECTORS.copyButton,
         );
@@ -670,14 +676,23 @@ export class QuillBotAutomation {
           context,
           `Mode 1: Click attempt ${i + 1} failed to trigger action, retrying...`,
         );
-        await this.delay(500);
+        
+        // After first failure, refresh page to fix potential React state corruption
+        if (i === 0) {
+          this.log(context, "Mode 1: Refreshing page before retry...");
+          await page.reload({ waitUntil: "domcontentloaded" });
+          await this.closePremiumModalIfPresent(page);
+          await this.handleCookieConsent(page);
+          await this.ensureMode(page, SELECTORS.firstModeTab);
+          await this.fillInputArea(page, text);
+          await this.delay(300);
+        }
       }
     }
 
     if (!clickSuccess) {
-      this.log(
-        context,
-        "Mode 1: Warning - No loader or result detected after multiple click attempts",
+      throw new Error(
+        "Critical: Click failed after 2 attempts - paraphrase button not responding",
       );
     }
 
@@ -713,7 +728,9 @@ export class QuillBotAutomation {
 
     // Use the same robust click logic as Mode 1
     let clickSuccess = false;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
+      // Add random jitter to desynchronize parallel accounts (100-400ms)
+      await this.randomDelay(100, 400);
       await this.triggerParaphrase(page);
 
       try {
@@ -725,7 +742,7 @@ export class QuillBotAutomation {
             const isDone = copySelectors.some((s) => document.querySelector(s));
             return isLoading || isDone;
           },
-          { timeout: 40000 },
+          { timeout: 10000 },
           SELECTORS.loadingIndicator,
           SELECTORS.copyButton,
         );
@@ -733,12 +750,24 @@ export class QuillBotAutomation {
         break;
       } catch {
         this.log(context, `Mode 2: Click attempt ${i + 1} failed, retrying...`);
-        await this.delay(500);
+        
+        // After first failure, refresh page to fix potential React state corruption
+        if (i === 0) {
+          this.log(context, "Mode 2: Refreshing page before retry...");
+          await page.reload({ waitUntil: "domcontentloaded" });
+          await this.closePremiumModalIfPresent(page);
+          await this.handleCookieConsent(page);
+          await this.switchMode(page, SELECTORS.secondModeTab);
+          await this.fillInputArea(page, text);
+          await this.delay(300);
+        }
       }
     }
 
     if (!clickSuccess) {
-      this.log(context, "Mode 2: Warning - No loader/result detected");
+      throw new Error(
+        "Critical: Click failed after 2 attempts - paraphrase button not responding",
+      );
     }
 
     await this.closePremiumModalIfPresent(page);
@@ -770,7 +799,9 @@ export class QuillBotAutomation {
     this.log(context, "Standard mode: clicking paraphrase");
 
     let clickSuccess = false;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
+      // Add random jitter to desynchronize parallel accounts (100-400ms)
+      await this.randomDelay(100, 400);
       await this.triggerParaphrase(page);
 
       try {
@@ -782,7 +813,7 @@ export class QuillBotAutomation {
             const isDone = copySelectors.some((s) => document.querySelector(s));
             return isLoading || isDone;
           },
-          { timeout: 40000 },
+          { timeout: 10000 },
           SELECTORS.loadingIndicator,
           SELECTORS.copyButton,
         );
@@ -795,14 +826,23 @@ export class QuillBotAutomation {
             i + 1
           } failed to trigger action, retrying...`,
         );
-        await this.delay(500);
+        
+        // After first failure, refresh page to fix potential React state corruption
+        if (i === 0) {
+          this.log(context, "Standard mode: Refreshing page before retry...");
+          await page.reload({ waitUntil: "domcontentloaded" });
+          await this.closePremiumModalIfPresent(page);
+          await this.handleCookieConsent(page);
+          await this.ensureMode(page, SELECTORS.standardModeTab);
+          await this.fillInputArea(page, text);
+          await this.delay(300);
+        }
       }
     }
 
     if (!clickSuccess) {
-      this.log(
-        context,
-        "Standard mode: Warning - No loader or result detected after multiple click attempts",
+      throw new Error(
+        "Critical: Click failed after 2 attempts - paraphrase button not responding",
       );
     }
 
@@ -1108,6 +1148,14 @@ export class QuillBotAutomation {
 
   private async delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Random delay between min and max milliseconds to desynchronize parallel operations
+   */
+  private randomDelay(min: number, max: number): Promise<void> {
+    const ms = Math.floor(Math.random() * (max - min + 1)) + min;
+    return this.delay(ms);
   }
 
   private log(context: string, message: string): void {
