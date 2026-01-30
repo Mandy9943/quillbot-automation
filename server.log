@@ -140,3 +140,70 @@ Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphr
 Batch request completed
 Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
 Current page state - URL: https://quillbot.com/paraphrasing-tool, Title: Paraphrasing Tool - QuillBot AI
+Shutting down server...
+Saving session cookies before shutdown...
+[acc1] Failed to save cookies: TargetCloseError: Protocol error (Network.getCookies): Session closed. Most likely the page has been closed.
+    at CdpCDPSession.send (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/CdpSession.ts:99:9)
+    at CdpPage.cookies (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/Page.ts:608:39)
+    at QuillBotAutomation.saveCookies (/home/cesar/projects/quillbot-automation-2/src/quillbotAutomation.ts:139:39)
+    at AccountWorker.saveCookies (/home/cesar/projects/quillbot-automation-2/src/accountWorker.ts:210:27)
+    at /home/cesar/projects/quillbot-automation-2/src/accountPool.ts:104:14
+    at Array.map (<anonymous>)
+    at AccountPool.saveAllCookies (/home/cesar/projects/quillbot-automation-2/src/accountPool.ts:103:60)
+    at process.shutdown (/home/cesar/projects/quillbot-automation-2/src/server.ts:263:16)
+    at process.emit (node:events:508:28)
+    at process.emit (node:domain:489:12)
+[acc2] Failed to save cookies: TargetCloseError: Protocol error (Network.getCookies): Session closed. Most likely the page has been closed.
+    at CdpCDPSession.send (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/CdpSession.ts:99:9)
+    at CdpPage.cookies (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/Page.ts:608:39)
+    at QuillBotAutomation.saveCookies (/home/cesar/projects/quillbot-automation-2/src/quillbotAutomation.ts:139:39)
+    at AccountWorker.saveCookies (/home/cesar/projects/quillbot-automation-2/src/accountWorker.ts:210:27)
+    at /home/cesar/projects/quillbot-automation-2/src/accountPool.ts:104:14
+    at Array.map (<anonymous>)
+    at AccountPool.saveAllCookies (/home/cesar/projects/quillbot-automation-2/src/accountPool.ts:103:60)
+    at process.shutdown (/home/cesar/projects/quillbot-automation-2/src/server.ts:263:16)
+    at process.emit (node:events:508:28)
+    at process.emit (node:domain:489:12)
+[acc3] Failed to save cookies: TargetCloseError: Protocol error (Network.getCookies): Session closed. Most likely the page has been closed.
+    at CdpCDPSession.send (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/CdpSession.ts:99:9)
+    at CdpPage.cookies (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/Page.ts:608:39)
+    at QuillBotAutomation.saveCookies (/home/cesar/projects/quillbot-automation-2/src/quillbotAutomation.ts:139:39)
+    at AccountWorker.saveCookies (/home/cesar/projects/quillbot-automation-2/src/accountWorker.ts:210:27)
+    at /home/cesar/projects/quillbot-automation-2/src/accountPool.ts:104:14
+    at Array.map (<anonymous>)
+    at AccountPool.saveAllCookies (/home/cesar/projects/quillbot-automation-2/src/accountPool.ts:103:60)
+    at process.shutdown (/home/cesar/projects/quillbot-automation-2/src/server.ts:263:16)
+    at process.emit (node:events:508:28)
+    at process.emit (node:domain:489:12)
+Disposing all account workers...
+[acc1] Failed to save cookies: TargetCloseError: Protocol error (Network.getCookies): Session closed. Most likely the page has been closed.
+    at CdpCDPSession.send (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/CdpSession.ts:99:9)
+    at CdpPage.cookies (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/Page.ts:608:39)
+    at QuillBotAutomation.saveCookies (/home/cesar/projects/quillbot-automation-2/src/quillbotAutomation.ts:139:39)
+    at AccountWorker.dispose (/home/cesar/projects/quillbot-automation-2/src/accountWorker.ts:86:29)
+    at /home/cesar/projects/quillbot-automation-2/src/accountPool.ts:92:14
+    at Array.map (<anonymous>)
+    at AccountPool.disposeAll (/home/cesar/projects/quillbot-automation-2/src/accountPool.ts:91:63)
+    at process.shutdown (/home/cesar/projects/quillbot-automation-2/src/server.ts:269:14)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+[acc2] Failed to save cookies: TargetCloseError: Protocol error (Network.getCookies): Session closed. Most likely the page has been closed.
+    at CdpCDPSession.send (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/CdpSession.ts:99:9)
+    at CdpPage.cookies (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/Page.ts:608:39)
+    at QuillBotAutomation.saveCookies (/home/cesar/projects/quillbot-automation-2/src/quillbotAutomation.ts:139:39)
+    at AccountWorker.dispose (/home/cesar/projects/quillbot-automation-2/src/accountWorker.ts:86:29)
+    at /home/cesar/projects/quillbot-automation-2/src/accountPool.ts:92:14
+    at Array.map (<anonymous>)
+    at AccountPool.disposeAll (/home/cesar/projects/quillbot-automation-2/src/accountPool.ts:91:63)
+    at process.shutdown (/home/cesar/projects/quillbot-automation-2/src/server.ts:269:14)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+[acc3] Failed to save cookies: TargetCloseError: Protocol error (Network.getCookies): Session closed. Most likely the page has been closed.
+    at CdpCDPSession.send (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/CdpSession.ts:99:9)
+    at CdpPage.cookies (/home/cesar/projects/quillbot-automation-2/node_modules/puppeteer-core/src/cdp/Page.ts:608:39)
+    at QuillBotAutomation.saveCookies (/home/cesar/projects/quillbot-automation-2/src/quillbotAutomation.ts:139:39)
+    at AccountWorker.dispose (/home/cesar/projects/quillbot-automation-2/src/accountWorker.ts:86:29)
+    at /home/cesar/projects/quillbot-automation-2/src/accountPool.ts:92:14
+    at Array.map (<anonymous>)
+    at AccountPool.disposeAll (/home/cesar/projects/quillbot-automation-2/src/accountPool.ts:91:63)
+    at process.shutdown (/home/cesar/projects/quillbot-automation-2/src/server.ts:269:14)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+All workers disposed

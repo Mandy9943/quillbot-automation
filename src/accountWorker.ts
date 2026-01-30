@@ -1,5 +1,15 @@
 import { ParaphraseResult, QuillBotAutomation } from "./quillbotAutomation";
 
+/**
+ * Custom error class for timeout errors - allows distinguishing from other errors
+ */
+export class TimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
 export interface AccountConfig {
   email: string;
   password: string;
@@ -157,6 +167,59 @@ export class AccountWorker {
     } catch (error) {
       this._lastError = error instanceof Error ? error.message : String(error);
       // Don't set status to error here - let it try to recover
+      throw error;
+    } finally {
+      this.release();
+    }
+  }
+
+  /**
+   * Run paraphrase with timeout - for small texts that should complete quickly.
+   * On timeout, triggers browser restart in background to recover the stuck worker.
+   */
+  async paraphraseWithTimeout(
+    text: string,
+    timeoutMs: number,
+    requestId?: string,
+  ): Promise<ParaphraseResult> {
+    if (!this.tryAcquire()) {
+      throw new Error(`[${this.accountId}] Worker is busy`);
+    }
+
+    try {
+      const operationPromise = this.automation.paraphrase(text, requestId);
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(
+            new TimeoutError(
+              `[${this.accountId}] Paraphrase timed out after ${timeoutMs}ms`,
+            ),
+          );
+        }, timeoutMs);
+      });
+
+      const result = await Promise.race([operationPromise, timeoutPromise]);
+      this._status = "ready";
+      this._lastError = undefined;
+      return result;
+    } catch (error) {
+      this._lastError = error instanceof Error ? error.message : String(error);
+
+      // On timeout, restart browser in background to kill stuck operation
+      if (error instanceof TimeoutError) {
+        console.log(
+          `[${this.accountId}] Timeout detected, restarting browser in background...`,
+        );
+        // Don't await - let it restart while we try fallback
+        this.restart().catch((restartErr) => {
+          console.error(
+            `[${this.accountId}] Background restart failed:`,
+            restartErr,
+          );
+        });
+      }
+
       throw error;
     } finally {
       this.release();

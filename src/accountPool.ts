@@ -3,7 +3,22 @@ import {
   AccountConfig,
   AccountWorker,
   AccountWorkerResult,
+  TimeoutError,
 } from "./accountWorker";
+
+// Timeout configuration for small texts
+const SMALL_TEXT_MAX_WORDS = 300;
+const SMALL_TEXT_TIMEOUT_MS = 50000; // 50 seconds
+
+/**
+ * Count words in a text string
+ */
+function getWordCount(text: string): number {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0).length;
+}
 
 export type ParaphraseMode = "dual" | "standard";
 
@@ -137,6 +152,7 @@ export class AccountPool {
   /**
    * Process a single account's text with fallback to other workers on failure
    * Uses FIFO queue for fallback - waits for a healthy worker to become available
+   * For small texts (<=300 words), applies a 50s timeout and only uses immediately available fallbacks
    */
   private async processWithFallback(
     accountId: string,
@@ -146,6 +162,8 @@ export class AccountPool {
   ): Promise<AccountWorkerResult> {
     const startTime = performance.now();
     const worker = this.workers.get(accountId);
+    const wordCount = getWordCount(text);
+    const isSmallText = wordCount <= SMALL_TEXT_MAX_WORDS;
 
     if (!worker) {
       return {
@@ -163,6 +181,9 @@ export class AccountPool {
     }
 
     // Try primary worker first
+    let primaryError: Error | null = null;
+    let isTimeoutError = false;
+
     try {
       if (mode === "standard") {
         const result = await worker.paraphraseStandardMode(text, requestId);
@@ -171,35 +192,63 @@ export class AccountPool {
           durationMs: Math.round(performance.now() - startTime),
         };
       } else {
-        const result = await worker.paraphrase(text, requestId);
+        // For small texts, use timeout version
+        if (isSmallText) {
+          console.log(
+            `[${accountId}] Small text (${wordCount} words), using ${SMALL_TEXT_TIMEOUT_MS}ms timeout`,
+          );
+          const result = await worker.paraphraseWithTimeout(
+            text,
+            SMALL_TEXT_TIMEOUT_MS,
+            requestId,
+          );
+          return {
+            firstMode: result.firstMode,
+            secondMode: result.secondMode,
+            durationMs: Math.round(performance.now() - startTime),
+          };
+        } else {
+          const result = await worker.paraphrase(text, requestId);
+          return {
+            firstMode: result.firstMode,
+            secondMode: result.secondMode,
+            durationMs: Math.round(performance.now() - startTime),
+          };
+        }
+      }
+    } catch (error) {
+      primaryError = error instanceof Error ? error : new Error(String(error));
+      isTimeoutError = error instanceof TimeoutError;
+
+      console.log(
+        `[${accountId}] Primary attempt failed${isTimeoutError ? " (TIMEOUT)" : ""}: ${primaryError.message}, trying fallback...`,
+      );
+    }
+
+    // Get fallback workers
+    const fallbackWorkers = this.getOtherWorkers(accountId);
+
+    // For small texts with timeout, only try immediately available workers (no FIFO waiting)
+    if (isSmallText) {
+      const availableFallbacks = fallbackWorkers.filter((w) => w.isAvailable);
+
+      if (availableFallbacks.length === 0) {
+        console.log(
+          `[${accountId}] No immediately available fallback workers for small text`,
+        );
         return {
-          firstMode: result.firstMode,
-          secondMode: result.secondMode,
           durationMs: Math.round(performance.now() - startTime),
+          error: isTimeoutError
+            ? "All accounts busy or timed out, please retry later"
+            : primaryError?.message || "Unknown error",
         };
       }
-    } catch (primaryError) {
-      const primaryErrorMsg =
-        primaryError instanceof Error
-          ? primaryError.message
-          : String(primaryError);
-      console.log(
-        `[${accountId}] Primary attempt failed: ${primaryErrorMsg}, trying fallback...`,
-      );
 
-      // Try fallback workers in FIFO order
-      const fallbackWorkers = this.getOtherWorkers(accountId);
-
-      for (const fallbackWorker of fallbackWorkers) {
+      // Try each available fallback with timeout
+      for (const fallbackWorker of availableFallbacks) {
         try {
-          // Wait for fallback worker to become available (FIFO queue)
           console.log(
-            `[${accountId}] Waiting for fallback worker ${fallbackWorker.accountId}...`,
-          );
-          await fallbackWorker.waitForAvailable();
-
-          console.log(
-            `[${accountId}] Using fallback worker ${fallbackWorker.accountId}`,
+            `[${accountId}] Using available fallback worker ${fallbackWorker.accountId} (with timeout)`,
           );
 
           if (mode === "standard") {
@@ -211,11 +260,12 @@ export class AccountPool {
               result,
               durationMs: Math.round(performance.now() - startTime),
               fallbackUsed: fallbackWorker.accountId,
-              error: primaryErrorMsg,
+              error: primaryError?.message,
             };
           } else {
-            const result = await fallbackWorker.paraphrase(
+            const result = await fallbackWorker.paraphraseWithTimeout(
               text,
+              SMALL_TEXT_TIMEOUT_MS,
               `${requestId}-fallback-${fallbackWorker.accountId}`,
             );
             return {
@@ -223,7 +273,7 @@ export class AccountPool {
               secondMode: result.secondMode,
               durationMs: Math.round(performance.now() - startTime),
               fallbackUsed: fallbackWorker.accountId,
-              error: primaryErrorMsg,
+              error: primaryError?.message,
             };
           }
         } catch (fallbackError) {
@@ -231,19 +281,75 @@ export class AccountPool {
             fallbackError instanceof Error
               ? fallbackError.message
               : String(fallbackError);
+          const isFallbackTimeout = fallbackError instanceof TimeoutError;
           console.log(
-            `[${accountId}] Fallback ${fallbackWorker.accountId} also failed: ${fallbackErrorMsg}`,
+            `[${accountId}] Fallback ${fallbackWorker.accountId} also failed${isFallbackTimeout ? " (TIMEOUT)" : ""}: ${fallbackErrorMsg}`,
           );
-          // Continue to next fallback
+          // Continue to next available fallback
         }
       }
 
-      // All workers failed
+      // All available fallbacks failed for small text
       return {
         durationMs: Math.round(performance.now() - startTime),
-        error: primaryErrorMsg,
+        error: "All accounts busy or timed out, please retry later",
       };
     }
+
+    // For large texts, use original FIFO fallback logic (no timeout)
+    for (const fallbackWorker of fallbackWorkers) {
+      try {
+        // Wait for fallback worker to become available (FIFO queue)
+        console.log(
+          `[${accountId}] Waiting for fallback worker ${fallbackWorker.accountId}...`,
+        );
+        await fallbackWorker.waitForAvailable();
+
+        console.log(
+          `[${accountId}] Using fallback worker ${fallbackWorker.accountId}`,
+        );
+
+        if (mode === "standard") {
+          const result = await fallbackWorker.paraphraseStandardMode(
+            text,
+            `${requestId}-fallback-${fallbackWorker.accountId}`,
+          );
+          return {
+            result,
+            durationMs: Math.round(performance.now() - startTime),
+            fallbackUsed: fallbackWorker.accountId,
+            error: primaryError?.message,
+          };
+        } else {
+          const result = await fallbackWorker.paraphrase(
+            text,
+            `${requestId}-fallback-${fallbackWorker.accountId}`,
+          );
+          return {
+            firstMode: result.firstMode,
+            secondMode: result.secondMode,
+            durationMs: Math.round(performance.now() - startTime),
+            fallbackUsed: fallbackWorker.accountId,
+            error: primaryError?.message,
+          };
+        }
+      } catch (fallbackError) {
+        const fallbackErrorMsg =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : String(fallbackError);
+        console.log(
+          `[${accountId}] Fallback ${fallbackWorker.accountId} also failed: ${fallbackErrorMsg}`,
+        );
+        // Continue to next fallback
+      }
+    }
+
+    // All workers failed
+    return {
+      durationMs: Math.round(performance.now() - startTime),
+      error: primaryError?.message || "Unknown error",
+    };
   }
 
   /**
