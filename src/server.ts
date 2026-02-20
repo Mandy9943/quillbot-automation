@@ -9,6 +9,33 @@ import { AccountConfig } from "./accountWorker";
 
 dotenv.config();
 
+const VALID_MODES = ["dual", "standard"] as const;
+const VALID_MODE_SET = new Set<string>(VALID_MODES);
+const VALID_ACCOUNT_IDS = ["acc1", "acc2", "acc3"] as const;
+const VALID_ACCOUNT_ID_SET = new Set<string>(VALID_ACCOUNT_IDS);
+
+interface BatchRequestBody {
+  acc1?: unknown;
+  acc2?: unknown;
+  acc3?: unknown;
+  mode?: unknown;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isDebugScreenshotName(file: string): boolean {
+  return (
+    (file.startsWith("error_") || file.startsWith("debug_")) &&
+    file.endsWith(".png")
+  );
+}
+
+function isValidDebugViewFilename(file: string): boolean {
+  return isDebugScreenshotName(file) && !file.includes("..");
+}
+
 // Parse accounts from environment variable
 let accountsJson = process.env.QUILLBOT_ACCOUNTS;
 
@@ -46,6 +73,7 @@ try {
   if (!Array.isArray(accounts) || accounts.length !== 3) {
     throw new Error("QUILLBOT_ACCOUNTS must contain exactly 3 accounts");
   }
+
   for (let i = 0; i < accounts.length; i++) {
     if (!accounts[i].email || !accounts[i].password) {
       throw new Error(`Account ${i + 1} is missing email or password`);
@@ -105,23 +133,22 @@ app.get("/debug/list-screenshots", (_req: Request, res: Response) => {
   const dir = process.cwd();
 
   try {
-    const files = fs
-      .readdirSync(dir)
-      .filter(
-        (file: string) =>
-          (file.startsWith("error_") || file.startsWith("debug_")) &&
-          file.endsWith(".png"),
-      )
-      .map((file: string) => ({
+    const dirEntries = fs.readdirSync(dir);
+    const files: Array<{ name: string; url: string; time: Date }> = [];
+
+    for (const file of dirEntries) {
+      if (!isDebugScreenshotName(file)) {
+        continue;
+      }
+
+      files.push({
         name: file,
         url: `/debug/view/${file}`,
         time: fs.statSync(path.join(dir, file)).mtime,
-      }))
-      .sort(
-        (a: { time: Date }, b: { time: Date }) =>
-          b.time.getTime() - a.time.getTime(),
-      );
+      });
+    }
 
+    files.sort((a, b) => b.time.getTime() - a.time.getTime());
     res.json(files);
   } catch (e) {
     res.status(500).json({ error: String(e) });
@@ -138,11 +165,7 @@ app.get(
     }
 
     // Basic security check
-    if (
-      (!filename.startsWith("error_") && !filename.startsWith("debug_")) ||
-      !filename.endsWith(".png") ||
-      filename.includes("..")
-    ) {
+    if (!isValidDebugViewFilename(filename)) {
       return res.status(400).send("Invalid filename");
     }
 
@@ -183,20 +206,22 @@ app.post("/paraphrase-batch", async (req: Request, res: Response) => {
     });
   }
 
-  const { acc1, acc2, acc3, mode } = req.body ?? {};
+  const body = (req.body ?? {}) as BatchRequestBody;
+  const { acc1, acc2, acc3, mode } = body;
 
   // Validate mode
-  const validModes = ["dual", "standard"];
-  if (mode && !validModes.includes(mode)) {
+  if (mode && (typeof mode !== "string" || !VALID_MODE_SET.has(mode))) {
     return res.status(400).json({
-      error: `Invalid mode. Must be one of: ${validModes.join(", ")}`,
+      error: `Invalid mode. Must be one of: ${VALID_MODES.join(", ")}`,
     });
   }
 
+  const resolvedMode = (mode || "dual") as BatchRequest["mode"];
+
   // Validate input
-  const hasAcc1 = typeof acc1 === "string" && acc1.trim().length > 0;
-  const hasAcc2 = typeof acc2 === "string" && acc2.trim().length > 0;
-  const hasAcc3 = typeof acc3 === "string" && acc3.trim().length > 0;
+  const hasAcc1 = isNonEmptyString(acc1);
+  const hasAcc2 = isNonEmptyString(acc2);
+  const hasAcc3 = isNonEmptyString(acc3);
 
   if (!hasAcc1 && !hasAcc2 && !hasAcc3) {
     return res.status(400).json({
@@ -204,13 +229,13 @@ app.post("/paraphrase-batch", async (req: Request, res: Response) => {
     });
   }
 
-  const request: BatchRequest = { mode: mode || "dual" };
+  const request: BatchRequest = { mode: resolvedMode };
   if (hasAcc1) request.acc1 = acc1;
   if (hasAcc2) request.acc2 = acc2;
   if (hasAcc3) request.acc3 = acc3;
 
   console.log(
-    `Received batch request (mode=${mode || "dual"}): acc1=${hasAcc1 ? acc1.length + " chars" : "none"}, acc2=${hasAcc2 ? acc2.length + " chars" : "none"}, acc3=${hasAcc3 ? acc3.length + " chars" : "none"}`,
+    `Received batch request (mode=${resolvedMode}): acc1=${hasAcc1 ? acc1.length + " chars" : "none"}, acc2=${hasAcc2 ? acc2.length + " chars" : "none"}, acc3=${hasAcc3 ? acc3.length + " chars" : "none"}`,
   );
 
   try {
@@ -245,9 +270,9 @@ app.post("/restart", async (_req: Request, res: Response) => {
 
 // Restart specific worker
 app.post("/restart/:accountId", async (req: Request, res: Response) => {
-  const accountId = req.params.accountId as string;
+  const accountId = req.params.accountId;
 
-  if (!["acc1", "acc2", "acc3"].includes(accountId)) {
+  if (!VALID_ACCOUNT_ID_SET.has(accountId)) {
     return res.status(400).json({
       error: "Invalid accountId. Must be acc1, acc2, or acc3.",
     });
