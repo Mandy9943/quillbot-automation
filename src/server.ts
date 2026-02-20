@@ -294,10 +294,10 @@ app.post("/restart", async (_req: Request, res: Response) => {
 });
 
 // Restart specific worker
-app.post("/restart/:accountId", async (req: Request, res: Response) => {
+app.post("/restart/:accountId", async (req: Request<{ accountId: string }>, res: Response) => {
   const accountId = req.params.accountId;
 
-  if (!VALID_ACCOUNT_ID_SET.has(accountId)) {
+  if (typeof accountId !== "string" || !VALID_ACCOUNT_ID_SET.has(accountId)) {
     return res.status(400).json({
       error: "Invalid accountId. Must be acc1, acc2, or acc3.",
     });
