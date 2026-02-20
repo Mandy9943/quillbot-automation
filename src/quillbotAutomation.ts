@@ -12,6 +12,18 @@ const LOGIN_URL = "https://quillbot.com/login";
 // Session persistence paths (configurable via environment variables)
 const SESSIONS_DIR = process.env.SESSIONS_DIR || "./sessions";
 const PARAPHRASER_URL = "https://quillbot.com/paraphrasing-tool";
+const QUILLBOT_ORIGIN = "https://quillbot.com";
+const QUILLBOT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+const MAX_PARAPHRASE_CLICK_ATTEMPTS = 2;
+const PARAPHRASE_START_TIMEOUT_MS = 10000;
+const OUTPUT_SELECTORS = [
+  '#paraphraser-output-box [data-testid="pphr/output_box/contenteditable"]',
+  "#paraphraser-output-box .ql-editor",
+  '#paraphraser-output-box [contenteditable="false"]',
+  "#paraphraser-output-box",
+  '[data-testid="pphr/output_box"]',
+] as const;
 
 const SELECTORS = {
   email: ['input[type="email"]'],
@@ -249,6 +261,62 @@ export class QuillBotAutomation {
     }
   }
 
+  private enqueueTask<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.taskQueue.then(task);
+    this.taskQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async runWithAutoRestart<T>(
+    context: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!this.isCriticalError(error)) {
+        throw error;
+      }
+
+      this.log(
+        context,
+        `Critical error detected: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      this.browserFailed = true;
+
+      if (this.isRestarting) {
+        this.log(context, "Restart already in progress, skipping automatic restart");
+        throw error;
+      }
+
+      this.log(context, "Attempting automatic browser restart...");
+      this.isRestarting = true;
+
+      try {
+        await this.dispose();
+        await this.init();
+        this.log(context, "Browser restarted successfully, retrying request...");
+        const result = await operation();
+        this.log(context, "Retry successful after browser restart");
+        return result;
+      } catch (retryError) {
+        this.log(
+          context,
+          `Retry failed after browser restart: ${
+            retryError instanceof Error
+              ? retryError.message
+              : String(retryError)
+          }`,
+        );
+        throw retryError;
+      } finally {
+        this.isRestarting = false;
+      }
+    }
+  }
+
   async paraphrase(
     text: string,
     requestId?: string,
@@ -262,8 +330,8 @@ export class QuillBotAutomation {
     const context = requestId ?? `paraphrase-${Date.now()}`;
     this.log(context, `Queued request (length: ${text.length} chars)`);
 
-    const task = async () => {
-      try {
+    return this.enqueueTask(() =>
+      this.runWithAutoRestart(context, async () => {
         const page = this.getPage();
         this.log(context, "Starting mode 1 flow");
         const firstModeOutput = await this.runFirstMode(page, text, context);
@@ -278,74 +346,8 @@ export class QuillBotAutomation {
           firstMode: firstModeOutput,
           secondMode: secondModeOutput,
         } satisfies ParaphraseResult;
-      } catch (error) {
-        if (this.isCriticalError(error)) {
-          this.log(
-            context,
-            `Critical error detected: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          this.browserFailed = true;
-
-          // Prevent concurrent restarts
-          if (this.isRestarting) {
-            this.log(
-              context,
-              "Restart already in progress, skipping automatic restart",
-            );
-            throw error;
-          }
-
-          // Attempt automatic restart
-          this.log(context, "Attempting automatic browser restart...");
-          this.isRestarting = true;
-          try {
-            await this.dispose();
-            await this.init();
-            this.isRestarting = false;
-            this.log(
-              context,
-              "Browser restarted successfully, retrying request...",
-            );
-
-            // Retry the operation once after restart
-            const page = this.getPage();
-            const firstModeOutput = await this.runFirstMode(
-              page,
-              text,
-              context,
-            );
-            const secondModeOutput = await this.runSecondMode(
-              page,
-              firstModeOutput,
-              context,
-            );
-            this.log(context, "Retry successful after browser restart");
-            return {
-              firstMode: firstModeOutput,
-              secondMode: secondModeOutput,
-            } satisfies ParaphraseResult;
-          } catch (retryError) {
-            this.log(
-              context,
-              `Retry failed after browser restart: ${
-                retryError instanceof Error
-                  ? retryError.message
-                  : String(retryError)
-              }`,
-            );
-            this.isRestarting = false;
-            throw retryError;
-          }
-        }
-        throw error;
-      }
-    };
-
-    const run = this.taskQueue.then(() => task());
-    this.taskQueue = run.catch(() => undefined);
-    return run;
+      }),
+    );
   }
 
   async paraphraseStandardMode(
@@ -364,69 +366,15 @@ export class QuillBotAutomation {
       `Queued standard mode request (length: ${text.length} chars)`,
     );
 
-    const task = async () => {
-      try {
+    return this.enqueueTask(() =>
+      this.runWithAutoRestart(context, async () => {
         const page = this.getPage();
         this.log(context, "Starting standard mode flow");
         const output = await this.runStandardMode(page, text, context);
         this.log(context, "Standard mode complete");
         return output;
-      } catch (error) {
-        if (this.isCriticalError(error)) {
-          this.log(
-            context,
-            `Critical error detected: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          this.browserFailed = true;
-
-          // Prevent concurrent restarts
-          if (this.isRestarting) {
-            this.log(
-              context,
-              "Restart already in progress, skipping automatic restart",
-            );
-            throw error;
-          }
-
-          // Attempt automatic restart
-          this.log(context, "Attempting automatic browser restart...");
-          this.isRestarting = true;
-          try {
-            await this.dispose();
-            await this.init();
-            this.isRestarting = false;
-            this.log(
-              context,
-              "Browser restarted successfully, retrying request...",
-            );
-
-            // Retry the operation once after restart
-            const page = this.getPage();
-            const output = await this.runStandardMode(page, text, context);
-            this.log(context, "Retry successful after browser restart");
-            return output;
-          } catch (retryError) {
-            this.log(
-              context,
-              `Retry failed after browser restart: ${
-                retryError instanceof Error
-                  ? retryError.message
-                  : String(retryError)
-              }`,
-            );
-            this.isRestarting = false;
-            throw retryError;
-          }
-        }
-        throw error;
-      }
-    };
-
-    const run = this.taskQueue.then(() => task());
-    this.taskQueue = run.catch(() => undefined);
-    return run;
+      }),
+    );
   }
 
   private async setup(): Promise<void> {
@@ -457,7 +405,7 @@ export class QuillBotAutomation {
           "--disable-background-networking",
           "--dns-prefetch-disable",
           "--window-size=1920,1080",
-          "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          `--user-agent=${QUILLBOT_USER_AGENT}`,
         ],
         protocolTimeout: 60000,
       });
@@ -466,7 +414,7 @@ export class QuillBotAutomation {
 
       page.setDefaultTimeout(this.timeout);
       const context = this.browser.defaultBrowserContext();
-      await context.overridePermissions("https://quillbot.com", [
+      await context.overridePermissions(QUILLBOT_ORIGIN, [
         "clipboard-read",
         "clipboard-write",
       ]);
@@ -477,10 +425,9 @@ export class QuillBotAutomation {
       await page.setExtraHTTPHeaders({
         "Accept-Language": "en-US,en;q=0.9",
         "Upgrade-Insecure-Requests": "1",
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        Referer: "https://quillbot.com/",
-        Origin: "https://quillbot.com",
+        "User-Agent": QUILLBOT_USER_AGENT,
+        Referer: `${QUILLBOT_ORIGIN}/`,
+        Origin: QUILLBOT_ORIGIN,
       });
 
       // Try to restore session from cookies first
@@ -649,61 +596,15 @@ export class QuillBotAutomation {
     await this.handleCookieConsent(page);
     this.log(context, "Mode 1: clicking paraphrase");
 
-    let clickSuccess = false;
-    for (let i = 0; i < 2; i++) {
-      // Add random jitter to desynchronize parallel accounts (100-400ms)
-      await this.randomDelay(100, 400);
-      await this.triggerParaphrase(page);
+    await this.clickParaphraseWithRetry(page, context, "Mode 1", async () => {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await this.closePremiumModalIfPresent(page);
+      await this.handleCookieConsent(page);
+      await this.ensureMode(page, SELECTORS.firstModeTab);
+      await this.fillInputArea(page, text);
+    });
 
-      // Wait for either loader or result to appear to confirm click worked
-      try {
-        await page.waitForFunction(
-          (loadingSelectors, copySelectors) => {
-            const isLoading = loadingSelectors.some((s) =>
-              document.querySelector(s),
-            );
-            const isDone = copySelectors.some((s) => document.querySelector(s));
-            return isLoading || isDone;
-          },
-          { timeout: 10000 },
-          SELECTORS.loadingIndicator,
-          SELECTORS.copyButton,
-        );
-        clickSuccess = true;
-        break;
-      } catch {
-        this.log(
-          context,
-          `Mode 1: Click attempt ${i + 1} failed to trigger action, retrying...`,
-        );
-
-        // After first failure, refresh page to fix potential React state corruption
-        if (i === 0) {
-          this.log(context, "Mode 1: Refreshing page before retry...");
-          await page.reload({ waitUntil: "domcontentloaded" });
-          await this.closePremiumModalIfPresent(page);
-          await this.handleCookieConsent(page);
-          await this.ensureMode(page, SELECTORS.firstModeTab);
-          await this.fillInputArea(page, text);
-          await this.delay(300);
-        }
-      }
-    }
-
-    if (!clickSuccess) {
-      throw new Error(
-        "Critical: Click failed after 2 attempts - paraphrase button not responding",
-      );
-    }
-
-    await this.closePremiumModalIfPresent(page);
-    await this.waitForLoaderToDisappear(page);
-    this.log(context, "Mode 1: copying result");
-    await this.copyResult(page);
-    await this.closePremiumModalIfPresent(page);
-    const output = await this.readClipboard(page);
-    this.log(context, "Mode 1: clipboard captured");
-    return output;
+    return this.captureParaphraseOutput(page, context, "Mode 1");
   }
 
   private async runSecondMode(
@@ -726,62 +627,16 @@ export class QuillBotAutomation {
     await this.delay(500);
     this.log(context, "Mode 2: clicking paraphrase");
 
-    // Use the same robust click logic as Mode 1
-    let clickSuccess = false;
-    for (let i = 0; i < 2; i++) {
-      // Add random jitter to desynchronize parallel accounts (100-400ms)
-      await this.randomDelay(100, 400);
-      await this.triggerParaphrase(page);
+    await this.clickParaphraseWithRetry(page, context, "Mode 2", async () => {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await this.closePremiumModalIfPresent(page);
+      await this.handleCookieConsent(page);
+      await this.switchMode(page, SELECTORS.secondModeTab);
+      await this.fillInputArea(page, text);
+    });
 
-      try {
-        await page.waitForFunction(
-          (loadingSelectors, copySelectors) => {
-            const isLoading = loadingSelectors.some((s) =>
-              document.querySelector(s),
-            );
-            const isDone = copySelectors.some((s) => document.querySelector(s));
-            return isLoading || isDone;
-          },
-          { timeout: 10000 },
-          SELECTORS.loadingIndicator,
-          SELECTORS.copyButton,
-        );
-        clickSuccess = true;
-        break;
-      } catch {
-        this.log(context, `Mode 2: Click attempt ${i + 1} failed, retrying...`);
-
-        // After first failure, refresh page to fix potential React state corruption
-        if (i === 0) {
-          this.log(context, "Mode 2: Refreshing page before retry...");
-          await page.reload({ waitUntil: "domcontentloaded" });
-          await this.closePremiumModalIfPresent(page);
-          await this.handleCookieConsent(page);
-          await this.switchMode(page, SELECTORS.secondModeTab);
-          await this.fillInputArea(page, text);
-          await this.delay(300);
-        }
-      }
-    }
-
-    if (!clickSuccess) {
-      throw new Error(
-        "Critical: Click failed after 2 attempts - paraphrase button not responding",
-      );
-    }
-
-    await this.closePremiumModalIfPresent(page);
-
-    await this.waitForLoaderToDisappear(page);
-
-    this.log(context, "Mode 2: copying result");
-    await this.copyResult(page);
-    await this.closePremiumModalIfPresent(page);
-    const output = await this.readClipboard(page);
-    this.log(context, "Mode 2: clipboard captured");
-
+    const output = await this.captureParaphraseOutput(page, context, "Mode 2");
     this.resetPageState(page, context);
-
     return output;
   }
 
@@ -798,64 +653,93 @@ export class QuillBotAutomation {
     await this.handleCookieConsent(page);
     this.log(context, "Standard mode: clicking paraphrase");
 
-    let clickSuccess = false;
-    for (let i = 0; i < 2; i++) {
-      // Add random jitter to desynchronize parallel accounts (100-400ms)
+    await this.clickParaphraseWithRetry(
+      page,
+      context,
+      "Standard mode",
+      async () => {
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await this.closePremiumModalIfPresent(page);
+        await this.handleCookieConsent(page);
+        await this.ensureMode(page, SELECTORS.standardModeTab);
+        await this.fillInputArea(page, text);
+      },
+    );
+
+    const output = await this.captureParaphraseOutput(
+      page,
+      context,
+      "Standard mode",
+    );
+    this.resetPageState(page, context);
+    return output;
+  }
+
+  private async waitForParaphraseToStart(page: Page): Promise<boolean> {
+    try {
+      await page.waitForFunction(
+        (loadingSelectors, copySelectors) => {
+          const isLoading = loadingSelectors.some((s) =>
+            document.querySelector(s),
+          );
+          const isDone = copySelectors.some((s) => document.querySelector(s));
+          return isLoading || isDone;
+        },
+        { timeout: PARAPHRASE_START_TIMEOUT_MS },
+        SELECTORS.loadingIndicator,
+        SELECTORS.copyButton,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async clickParaphraseWithRetry(
+    page: Page,
+    context: string,
+    modeLabel: string,
+    restoreAfterFirstFailure: () => Promise<void>,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < MAX_PARAPHRASE_CLICK_ATTEMPTS; attempt++) {
       await this.randomDelay(100, 400);
       await this.triggerParaphrase(page);
 
-      try {
-        await page.waitForFunction(
-          (loadingSelectors, copySelectors) => {
-            const isLoading = loadingSelectors.some((s) =>
-              document.querySelector(s),
-            );
-            const isDone = copySelectors.some((s) => document.querySelector(s));
-            return isLoading || isDone;
-          },
-          { timeout: 10000 },
-          SELECTORS.loadingIndicator,
-          SELECTORS.copyButton,
-        );
-        clickSuccess = true;
-        break;
-      } catch {
-        this.log(
-          context,
-          `Standard mode: Click attempt ${
-            i + 1
-          } failed to trigger action, retrying...`,
-        );
+      if (await this.waitForParaphraseToStart(page)) {
+        return;
+      }
 
-        // After first failure, refresh page to fix potential React state corruption
-        if (i === 0) {
-          this.log(context, "Standard mode: Refreshing page before retry...");
-          await page.reload({ waitUntil: "domcontentloaded" });
-          await this.closePremiumModalIfPresent(page);
-          await this.handleCookieConsent(page);
-          await this.ensureMode(page, SELECTORS.standardModeTab);
-          await this.fillInputArea(page, text);
-          await this.delay(300);
-        }
+      this.log(
+        context,
+        `${modeLabel}: Click attempt ${
+          attempt + 1
+        } failed to trigger action, retrying...`,
+      );
+
+      if (attempt === 0) {
+        this.log(context, `${modeLabel}: Refreshing page before retry...`);
+        await restoreAfterFirstFailure();
+        await this.delay(300);
       }
     }
 
-    if (!clickSuccess) {
-      throw new Error(
-        "Critical: Click failed after 2 attempts - paraphrase button not responding",
-      );
-    }
+    throw new Error(
+      "Critical: Click failed after 2 attempts - paraphrase button not responding",
+    );
+  }
 
+  private async captureParaphraseOutput(
+    page: Page,
+    context: string,
+    modeLabel: string,
+  ): Promise<string> {
     await this.closePremiumModalIfPresent(page);
     await this.waitForLoaderToDisappear(page);
-    this.log(context, "Standard mode: copying result");
+    this.log(context, `${modeLabel}: copying result`);
     await this.copyResult(page);
     await this.closePremiumModalIfPresent(page);
     const output = await this.readClipboard(page);
-    this.log(context, "Standard mode: clipboard captured");
-
-    this.resetPageState(page, context);
-
+    this.log(context, `${modeLabel}: clipboard captured`);
     return output;
   }
 
@@ -947,7 +831,6 @@ export class QuillBotAutomation {
     // Log what we found to help debugging
     const buttonState = await page.evaluate(
       (el) => ({
-        html: el.outerHTML.substring(0, 150),
         disabled:
           el.hasAttribute("disabled") ||
           el.getAttribute("aria-disabled") === "true",
@@ -1049,15 +932,7 @@ export class QuillBotAutomation {
    * This avoids clipboard sharing issues when running multiple browser instances
    */
   private async readOutputText(page: Page): Promise<string> {
-    const outputSelectors = [
-      '#paraphraser-output-box [data-testid="pphr/output_box/contenteditable"]',
-      "#paraphraser-output-box .ql-editor",
-      '#paraphraser-output-box [contenteditable="false"]',
-      "#paraphraser-output-box",
-      '[data-testid="pphr/output_box"]',
-    ];
-
-    for (const selector of outputSelectors) {
+    for (const selector of OUTPUT_SELECTORS) {
       try {
         const element = await page.$(selector);
         if (element) {
@@ -1285,20 +1160,48 @@ export class QuillBotAutomation {
     timeout = this.timeout,
   ): Promise<ElementHandle<Element>> {
     let lastError: unknown;
-    for (const selector of selectors) {
+
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const handle = await page.waitForSelector(selector, { timeout });
-        if (handle) {
-          return handle;
-        }
+        await page.waitForFunction(
+          (selectorList) =>
+            selectorList.some((selector) => !!document.querySelector(selector)),
+          { timeout },
+          selectors,
+        );
+        lastError = undefined;
+        break;
       } catch (error) {
         lastError = error;
+        const message = error instanceof Error ? error.message : "";
+        if (
+          message.includes("Execution context was destroyed") &&
+          attempt < 2
+        ) {
+          await this.delay(50);
+          continue;
+        }
+        break;
       }
     }
 
-    // If we failed to find any selector, take a screenshot for debugging
+    if (!lastError) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        for (const selector of selectors) {
+          const handle = await page.$(selector);
+          if (handle) {
+            return handle;
+          }
+        }
+        if (attempt < 2) {
+          await this.delay(25);
+        }
+      }
+      lastError = new Error(`Unable to resolve selectors after wait`);
+    }
+
+    // If we failed to find any selector, capture current page state.
     try {
-      // Also log current URL and title
       const url = page.url();
       const title = await page.title();
       console.log(`Current page state - URL: ${url}, Title: ${title}`);

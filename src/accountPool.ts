@@ -9,15 +9,25 @@ import {
 // Timeout configuration for small texts
 const SMALL_TEXT_MAX_WORDS = 300;
 const SMALL_TEXT_TIMEOUT_MS = 50000; // 50 seconds
+const ACCOUNT_IDS = ["acc1", "acc2", "acc3"] as const;
+type AccountId = (typeof ACCOUNT_IDS)[number];
+
+interface WorkerOutput {
+  result?: string;
+  firstMode?: string;
+  secondMode?: string;
+}
 
 /**
- * Count words in a text string
+ * Count words in a text string without allocating split/filter arrays.
  */
 function getWordCount(text: string): number {
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter((word) => word.length > 0).length;
+  const matcher = /\S+/g;
+  let count = 0;
+  while (matcher.exec(text) !== null) {
+    count += 1;
+  }
+  return count;
 }
 
 export type ParaphraseMode = "dual" | "standard";
@@ -44,24 +54,22 @@ export interface PoolStatus {
 }
 
 export class AccountPool {
-  private workers: Map<string, AccountWorker> = new Map();
-  private accountIds = ["acc1", "acc2", "acc3"] as const;
+  private readonly workers: Record<AccountId, AccountWorker>;
   private _isReady = false;
 
   constructor(
     private readonly accounts: AccountConfig[],
     private readonly headless: boolean = true,
   ) {
-    if (accounts.length !== 3) {
+    if (accounts.length !== ACCOUNT_IDS.length) {
       throw new Error("AccountPool requires exactly 3 accounts");
     }
 
-    // Create workers for each account
-    for (let i = 0; i < 3; i++) {
-      const accountId = this.accountIds[i];
-      const worker = new AccountWorker(accountId, accounts[i], headless);
-      this.workers.set(accountId, worker);
-    }
+    this.workers = {
+      acc1: new AccountWorker("acc1", accounts[0], headless),
+      acc2: new AccountWorker("acc2", accounts[1], headless),
+      acc3: new AccountWorker("acc3", accounts[2], headless),
+    };
   }
 
   get isReady(): boolean {
@@ -75,20 +83,29 @@ export class AccountPool {
   async initAll(): Promise<void> {
     console.log("Initializing all account workers in parallel...");
 
-    const initPromises = Array.from(this.workers.entries()).map(
-      async ([accountId, worker]) => {
-        try {
-          await worker.init();
-          return { accountId, success: true };
-        } catch (error) {
-          console.error(`Failed to initialize ${accountId}:`, error);
-          return { accountId, success: false, error };
-        }
-      },
-    );
+    const initPromises: Array<Promise<{ accountId: AccountId; success: boolean }>> =
+      [];
+
+    for (const accountId of ACCOUNT_IDS) {
+      const worker = this.workers[accountId];
+      initPromises.push(
+        worker
+          .init()
+          .then(() => ({ accountId, success: true }))
+          .catch((error) => {
+            console.error(`Failed to initialize ${accountId}:`, error);
+            return { accountId, success: false };
+          }),
+      );
+    }
 
     const results = await Promise.all(initPromises);
-    const successCount = results.filter((r) => r.success).length;
+    let successCount = 0;
+    for (const result of results) {
+      if (result.success) {
+        successCount += 1;
+      }
+    }
 
     if (successCount === 0) {
       throw new Error("All account workers failed to initialize");
@@ -103,9 +120,12 @@ export class AccountPool {
    */
   async disposeAll(): Promise<void> {
     console.log("Disposing all account workers...");
-    const disposePromises = Array.from(this.workers.values()).map((worker) =>
-      worker.dispose(),
-    );
+    const disposePromises: Array<Promise<void>> = [];
+
+    for (const accountId of ACCOUNT_IDS) {
+      disposePromises.push(this.workers[accountId].dispose());
+    }
+
     await Promise.all(disposePromises);
     this._isReady = false;
     console.log("All workers disposed");
@@ -115,11 +135,17 @@ export class AccountPool {
    * Save cookies for all workers
    */
   async saveAllCookies(): Promise<void> {
-    const savePromises = Array.from(this.workers.values()).map((worker) =>
-      worker.saveCookies().catch((err) => {
-        console.error(`Failed to save cookies for ${worker.accountId}:`, err);
-      }),
-    );
+    const savePromises: Array<Promise<void>> = [];
+
+    for (const accountId of ACCOUNT_IDS) {
+      const worker = this.workers[accountId];
+      savePromises.push(
+        worker.saveCookies().catch((err) => {
+          console.error(`Failed to save cookies for ${worker.accountId}:`, err);
+        }),
+      );
+    }
+
     await Promise.all(savePromises);
   }
 
@@ -127,9 +153,9 @@ export class AccountPool {
    * Get status of all workers
    */
   getStatus(): PoolStatus {
-    const acc1 = this.workers.get("acc1")!;
-    const acc2 = this.workers.get("acc2")!;
-    const acc3 = this.workers.get("acc3")!;
+    const acc1 = this.workers.acc1;
+    const acc2 = this.workers.acc2;
+    const acc3 = this.workers.acc3;
 
     return {
       acc1: { status: acc1.status, lastError: acc1.lastError },
@@ -142,11 +168,143 @@ export class AccountPool {
   /**
    * Get other available workers excluding the specified one, sorted by account order
    */
-  private getOtherWorkers(excludeId: string): AccountWorker[] {
-    return this.accountIds
-      .filter((id) => id !== excludeId)
-      .map((id) => this.workers.get(id)!)
-      .filter((worker) => worker.status === "ready");
+  private getOtherWorkers(excludeId: AccountId): AccountWorker[] {
+    const workers: AccountWorker[] = [];
+
+    for (const accountId of ACCOUNT_IDS) {
+      if (accountId === excludeId) {
+        continue;
+      }
+
+      const worker = this.workers[accountId];
+      if (worker.status === "ready") {
+        workers.push(worker);
+      }
+    }
+
+    return workers;
+  }
+
+  private durationSince(startTime: number): number {
+    return Math.round(performance.now() - startTime);
+  }
+
+  private toWorkerResult(
+    startTime: number,
+    output: WorkerOutput,
+    fallbackUsed?: string,
+    primaryError?: string,
+  ): AccountWorkerResult {
+    const response: AccountWorkerResult = {
+      durationMs: this.durationSince(startTime),
+    };
+
+    if (output.result !== undefined) {
+      response.result = output.result;
+    }
+
+    if (output.firstMode !== undefined) {
+      response.firstMode = output.firstMode;
+    }
+
+    if (output.secondMode !== undefined) {
+      response.secondMode = output.secondMode;
+    }
+
+    if (fallbackUsed) {
+      response.fallbackUsed = fallbackUsed;
+    }
+
+    if (primaryError) {
+      response.error = primaryError;
+    }
+
+    return response;
+  }
+
+  private async invokeWorker(
+    worker: AccountWorker,
+    text: string,
+    mode: ParaphraseMode,
+    requestId: string,
+    useTimeout: boolean,
+  ): Promise<WorkerOutput> {
+    if (mode === "standard") {
+      return {
+        result: await worker.paraphraseStandardMode(text, requestId),
+      };
+    }
+
+    const result = useTimeout
+      ? await worker.paraphraseWithTimeout(text, SMALL_TEXT_TIMEOUT_MS, requestId)
+      : await worker.paraphrase(text, requestId);
+
+    return {
+      firstMode: result.firstMode,
+      secondMode: result.secondMode,
+    };
+  }
+
+  private async tryFallbackWorkers(
+    accountId: AccountId,
+    fallbackWorkers: AccountWorker[],
+    text: string,
+    requestId: string,
+    mode: ParaphraseMode,
+    startTime: number,
+    primaryError: Error | null,
+    options: { useTimeout: boolean; waitForAvailability: boolean },
+  ): Promise<AccountWorkerResult | undefined> {
+    for (const fallbackWorker of fallbackWorkers) {
+      try {
+        if (options.waitForAvailability) {
+          console.log(
+            `[${accountId}] Waiting for fallback worker ${fallbackWorker.accountId}...`,
+          );
+          await fallbackWorker.waitForAvailable();
+          console.log(
+            `[${accountId}] Using fallback worker ${fallbackWorker.accountId}`,
+          );
+        } else {
+          console.log(
+            `[${accountId}] Using available fallback worker ${fallbackWorker.accountId} (with timeout)`,
+          );
+        }
+
+        const output = await this.invokeWorker(
+          fallbackWorker,
+          text,
+          mode,
+          `${requestId}-fallback-${fallbackWorker.accountId}`,
+          options.useTimeout,
+        );
+
+        return this.toWorkerResult(
+          startTime,
+          output,
+          fallbackWorker.accountId,
+          primaryError?.message,
+        );
+      } catch (fallbackError) {
+        const fallbackErrorMsg =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : String(fallbackError);
+        const isFallbackTimeout = fallbackError instanceof TimeoutError;
+
+        if (options.useTimeout) {
+          console.log(
+            `[${accountId}] Fallback ${fallbackWorker.accountId} also failed${isFallbackTimeout ? " (TIMEOUT)" : ""}: ${fallbackErrorMsg}`,
+          );
+        } else {
+          console.log(
+            `[${accountId}] Fallback ${fallbackWorker.accountId} also failed: ${fallbackErrorMsg}`,
+          );
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -155,27 +313,19 @@ export class AccountPool {
    * For small texts (<=300 words), applies a 50s timeout and only uses immediately available fallbacks
    */
   private async processWithFallback(
-    accountId: string,
+    accountId: AccountId,
     text: string,
     requestId: string,
     mode: ParaphraseMode = "dual",
   ): Promise<AccountWorkerResult> {
     const startTime = performance.now();
-    const worker = this.workers.get(accountId);
+    const worker = this.workers[accountId];
     const wordCount = getWordCount(text);
     const isSmallText = wordCount <= SMALL_TEXT_MAX_WORDS;
 
-    if (!worker) {
-      return {
-        durationMs: Math.round(performance.now() - startTime),
-        error: `Account ${accountId} not found`,
-      };
-    }
-
-    // Check if primary worker is available
     if (worker.status !== "ready") {
       return {
-        durationMs: Math.round(performance.now() - startTime),
+        durationMs: this.durationSince(startTime),
         error: `Account ${accountId} is not ready: ${worker.lastError || worker.status}`,
       };
     }
@@ -185,37 +335,21 @@ export class AccountPool {
     let isTimeoutError = false;
 
     try {
-      if (mode === "standard") {
-        const result = await worker.paraphraseStandardMode(text, requestId);
-        return {
-          result,
-          durationMs: Math.round(performance.now() - startTime),
-        };
-      } else {
-        // For small texts, use timeout version
-        if (isSmallText) {
-          console.log(
-            `[${accountId}] Small text (${wordCount} words), using ${SMALL_TEXT_TIMEOUT_MS}ms timeout`,
-          );
-          const result = await worker.paraphraseWithTimeout(
-            text,
-            SMALL_TEXT_TIMEOUT_MS,
-            requestId,
-          );
-          return {
-            firstMode: result.firstMode,
-            secondMode: result.secondMode,
-            durationMs: Math.round(performance.now() - startTime),
-          };
-        } else {
-          const result = await worker.paraphrase(text, requestId);
-          return {
-            firstMode: result.firstMode,
-            secondMode: result.secondMode,
-            durationMs: Math.round(performance.now() - startTime),
-          };
-        }
+      if (mode === "dual" && isSmallText) {
+        console.log(
+          `[${accountId}] Small text (${wordCount} words), using ${SMALL_TEXT_TIMEOUT_MS}ms timeout`,
+        );
       }
+
+      const primaryOutput = await this.invokeWorker(
+        worker,
+        text,
+        mode,
+        requestId,
+        mode === "dual" && isSmallText,
+      );
+
+      return this.toWorkerResult(startTime, primaryOutput);
     } catch (error) {
       primaryError = error instanceof Error ? error : new Error(String(error));
       isTimeoutError = error instanceof TimeoutError;
@@ -225,129 +359,67 @@ export class AccountPool {
       );
     }
 
-    // Get fallback workers
     const fallbackWorkers = this.getOtherWorkers(accountId);
 
-    // For small texts with timeout, only try immediately available workers (no FIFO waiting)
     if (isSmallText) {
-      const availableFallbacks = fallbackWorkers.filter((w) => w.isAvailable);
+      const availableFallbacks: AccountWorker[] = [];
+      for (const fallbackWorker of fallbackWorkers) {
+        if (fallbackWorker.isAvailable) {
+          availableFallbacks.push(fallbackWorker);
+        }
+      }
 
       if (availableFallbacks.length === 0) {
         console.log(
           `[${accountId}] No immediately available fallback workers for small text`,
         );
         return {
-          durationMs: Math.round(performance.now() - startTime),
+          durationMs: this.durationSince(startTime),
           error: isTimeoutError
             ? "All accounts busy or timed out, please retry later"
             : primaryError?.message || "Unknown error",
         };
       }
 
-      // Try each available fallback with timeout
-      for (const fallbackWorker of availableFallbacks) {
-        try {
-          console.log(
-            `[${accountId}] Using available fallback worker ${fallbackWorker.accountId} (with timeout)`,
-          );
+      const fallbackResult = await this.tryFallbackWorkers(
+        accountId,
+        availableFallbacks,
+        text,
+        requestId,
+        mode,
+        startTime,
+        primaryError,
+        { useTimeout: mode === "dual", waitForAvailability: false },
+      );
 
-          if (mode === "standard") {
-            const result = await fallbackWorker.paraphraseStandardMode(
-              text,
-              `${requestId}-fallback-${fallbackWorker.accountId}`,
-            );
-            return {
-              result,
-              durationMs: Math.round(performance.now() - startTime),
-              fallbackUsed: fallbackWorker.accountId,
-              error: primaryError?.message,
-            };
-          } else {
-            const result = await fallbackWorker.paraphraseWithTimeout(
-              text,
-              SMALL_TEXT_TIMEOUT_MS,
-              `${requestId}-fallback-${fallbackWorker.accountId}`,
-            );
-            return {
-              firstMode: result.firstMode,
-              secondMode: result.secondMode,
-              durationMs: Math.round(performance.now() - startTime),
-              fallbackUsed: fallbackWorker.accountId,
-              error: primaryError?.message,
-            };
-          }
-        } catch (fallbackError) {
-          const fallbackErrorMsg =
-            fallbackError instanceof Error
-              ? fallbackError.message
-              : String(fallbackError);
-          const isFallbackTimeout = fallbackError instanceof TimeoutError;
-          console.log(
-            `[${accountId}] Fallback ${fallbackWorker.accountId} also failed${isFallbackTimeout ? " (TIMEOUT)" : ""}: ${fallbackErrorMsg}`,
-          );
-          // Continue to next available fallback
-        }
+      if (fallbackResult) {
+        return fallbackResult;
       }
 
-      // All available fallbacks failed for small text
       return {
-        durationMs: Math.round(performance.now() - startTime),
+        durationMs: this.durationSince(startTime),
         error: "All accounts busy or timed out, please retry later",
       };
     }
 
-    // For large texts, use original FIFO fallback logic (no timeout)
-    for (const fallbackWorker of fallbackWorkers) {
-      try {
-        // Wait for fallback worker to become available (FIFO queue)
-        console.log(
-          `[${accountId}] Waiting for fallback worker ${fallbackWorker.accountId}...`,
-        );
-        await fallbackWorker.waitForAvailable();
+    const fallbackResult = await this.tryFallbackWorkers(
+      accountId,
+      fallbackWorkers,
+      text,
+      requestId,
+      mode,
+      startTime,
+      primaryError,
+      { useTimeout: false, waitForAvailability: true },
+    );
 
-        console.log(
-          `[${accountId}] Using fallback worker ${fallbackWorker.accountId}`,
-        );
-
-        if (mode === "standard") {
-          const result = await fallbackWorker.paraphraseStandardMode(
-            text,
-            `${requestId}-fallback-${fallbackWorker.accountId}`,
-          );
-          return {
-            result,
-            durationMs: Math.round(performance.now() - startTime),
-            fallbackUsed: fallbackWorker.accountId,
-            error: primaryError?.message,
-          };
-        } else {
-          const result = await fallbackWorker.paraphrase(
-            text,
-            `${requestId}-fallback-${fallbackWorker.accountId}`,
-          );
-          return {
-            firstMode: result.firstMode,
-            secondMode: result.secondMode,
-            durationMs: Math.round(performance.now() - startTime),
-            fallbackUsed: fallbackWorker.accountId,
-            error: primaryError?.message,
-          };
-        }
-      } catch (fallbackError) {
-        const fallbackErrorMsg =
-          fallbackError instanceof Error
-            ? fallbackError.message
-            : String(fallbackError);
-        console.log(
-          `[${accountId}] Fallback ${fallbackWorker.accountId} also failed: ${fallbackErrorMsg}`,
-        );
-        // Continue to next fallback
-      }
+    if (fallbackResult) {
+      return fallbackResult;
     }
 
     // All workers failed
     return {
-      durationMs: Math.round(performance.now() - startTime),
+      durationMs: this.durationSince(startTime),
       error: primaryError?.message || "Unknown error",
     };
   }
@@ -363,64 +435,44 @@ export class AccountPool {
   async processBatch(request: BatchRequest): Promise<BatchResponse> {
     const requestId = `batch-${Date.now()}`;
     const mode = request.mode || "dual";
-    const tasks: Array<{
-      accountId: "acc1" | "acc2" | "acc3";
-      promise: Promise<AccountWorkerResult>;
-    }> = [];
+    const response: BatchResponse = {};
+    const tasks: Array<Promise<void>> = [];
 
-    // Create tasks for each requested account
     if (request.acc1) {
-      tasks.push({
-        accountId: "acc1",
-        promise: this.processWithFallback(
-          "acc1",
-          request.acc1,
-          `${requestId}-acc1`,
-          mode,
+      tasks.push(
+        this.processWithFallback("acc1", request.acc1, `${requestId}-acc1`, mode).then(
+          (result) => {
+            response.acc1 = result;
+          },
         ),
-      });
+      );
     }
+
     if (request.acc2) {
-      tasks.push({
-        accountId: "acc2",
-        promise: this.processWithFallback(
-          "acc2",
-          request.acc2,
-          `${requestId}-acc2`,
-          mode,
+      tasks.push(
+        this.processWithFallback("acc2", request.acc2, `${requestId}-acc2`, mode).then(
+          (result) => {
+            response.acc2 = result;
+          },
         ),
-      });
+      );
     }
+
     if (request.acc3) {
-      tasks.push({
-        accountId: "acc3",
-        promise: this.processWithFallback(
-          "acc3",
-          request.acc3,
-          `${requestId}-acc3`,
-          mode,
+      tasks.push(
+        this.processWithFallback("acc3", request.acc3, `${requestId}-acc3`, mode).then(
+          (result) => {
+            response.acc3 = result;
+          },
         ),
-      });
+      );
     }
 
     if (tasks.length === 0) {
       throw new Error("At least one account text must be provided");
     }
 
-    // Execute all tasks in parallel
-    const results = await Promise.all(
-      tasks.map(async (task) => ({
-        accountId: task.accountId,
-        result: await task.promise,
-      })),
-    );
-
-    // Build response object
-    const response: BatchResponse = {};
-    for (const { accountId, result } of results) {
-      response[accountId] = result;
-    }
-
+    await Promise.all(tasks);
     return response;
   }
 
@@ -428,11 +480,10 @@ export class AccountPool {
    * Restart a specific worker
    */
   async restartWorker(accountId: string): Promise<void> {
-    const worker = this.workers.get(accountId);
-    if (!worker) {
+    if (!this.isAccountId(accountId)) {
       throw new Error(`Account ${accountId} not found`);
     }
-    await worker.restart();
+    await this.workers[accountId].restart();
   }
 
   /**
@@ -440,20 +491,34 @@ export class AccountPool {
    */
   async restartAll(): Promise<void> {
     console.log("Restarting all workers...");
-    const restartPromises = Array.from(this.workers.entries()).map(
-      async ([accountId, worker]) => {
-        try {
-          await worker.restart();
-          return { accountId, success: true };
-        } catch (error) {
-          console.error(`Failed to restart ${accountId}:`, error);
-          return { accountId, success: false };
-        }
-      },
-    );
+    const restartPromises: Array<Promise<{ accountId: AccountId; success: boolean }>> =
+      [];
+
+    for (const accountId of ACCOUNT_IDS) {
+      const worker = this.workers[accountId];
+      restartPromises.push(
+        worker
+          .restart()
+          .then(() => ({ accountId, success: true }))
+          .catch((error) => {
+            console.error(`Failed to restart ${accountId}:`, error);
+            return { accountId, success: false };
+          }),
+      );
+    }
 
     const results = await Promise.all(restartPromises);
-    const successCount = results.filter((r) => r.success).length;
+    let successCount = 0;
+    for (const result of results) {
+      if (result.success) {
+        successCount += 1;
+      }
+    }
+
     console.log(`Restart complete: ${successCount}/3 workers restarted`);
+  }
+
+  private isAccountId(accountId: string): accountId is AccountId {
+    return accountId === "acc1" || accountId === "acc2" || accountId === "acc3";
   }
 }

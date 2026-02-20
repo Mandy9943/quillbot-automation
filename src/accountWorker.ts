@@ -26,17 +26,20 @@ export interface AccountWorkerResult {
   fallbackUsed?: string;
 }
 
+interface Waiter {
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+
 export class AccountWorker {
   private automation: QuillBotAutomation;
   private _status: AccountStatus = "initializing";
   private _lastError?: string;
   private _busy: boolean = false;
 
-  // FIFO fallback queue management
-  private waitQueue: Array<{
-    resolve: () => void;
-    reject: (err: Error) => void;
-  }> = [];
+  // FIFO fallback queue management (head index avoids O(n) Array.shift reindexing)
+  private waitQueue: Array<Waiter | undefined> = [];
+  private waitQueueHead = 0;
 
   constructor(
     public readonly accountId: string,
@@ -105,10 +108,7 @@ export class AccountWorker {
     this._busy = false;
 
     // Reject all waiting fallback requests
-    while (this.waitQueue.length > 0) {
-      const waiter = this.waitQueue.shift();
-      waiter?.reject(new Error("Worker disposed"));
-    }
+    this.rejectAllWaiters(new Error("Worker disposed"));
   }
 
   /**
@@ -129,10 +129,7 @@ export class AccountWorker {
     this._busy = false;
 
     // Notify the first waiter in queue (FIFO)
-    if (this.waitQueue.length > 0) {
-      const nextWaiter = this.waitQueue.shift();
-      nextWaiter?.resolve();
-    }
+    this.dequeueWaiter()?.resolve();
   }
 
   /**
@@ -148,6 +145,54 @@ export class AccountWorker {
     });
   }
 
+  private dequeueWaiter(): Waiter | undefined {
+    if (this.waitQueueHead >= this.waitQueue.length) {
+      return undefined;
+    }
+
+    const waiter = this.waitQueue[this.waitQueueHead];
+    this.waitQueue[this.waitQueueHead] = undefined;
+    this.waitQueueHead += 1;
+
+    // Compact periodically so the backing array doesn't grow unbounded.
+    if (this.waitQueueHead > 64 && this.waitQueueHead * 2 >= this.waitQueue.length) {
+      this.waitQueue = this.waitQueue.slice(this.waitQueueHead);
+      this.waitQueueHead = 0;
+    }
+
+    return waiter;
+  }
+
+  private rejectAllWaiters(error: Error): void {
+    for (let i = this.waitQueueHead; i < this.waitQueue.length; i++) {
+      this.waitQueue[i]?.reject(error);
+    }
+    this.waitQueue = [];
+    this.waitQueueHead = 0;
+  }
+
+  private async runWithLock<T>(
+    operation: () => Promise<T>,
+    onError?: (error: unknown) => void,
+  ): Promise<T> {
+    if (!this.tryAcquire()) {
+      throw new Error(`[${this.accountId}] Worker is busy`);
+    }
+
+    try {
+      const result = await operation();
+      this._status = "ready";
+      this._lastError = undefined;
+      return result;
+    } catch (error) {
+      this._lastError = error instanceof Error ? error.message : String(error);
+      onError?.(error);
+      throw error;
+    } finally {
+      this.release();
+    }
+  }
+
   /**
    * Run paraphrase with both modes (Simple -> Shorten)
    */
@@ -155,22 +200,7 @@ export class AccountWorker {
     text: string,
     requestId?: string,
   ): Promise<ParaphraseResult> {
-    if (!this.tryAcquire()) {
-      throw new Error(`[${this.accountId}] Worker is busy`);
-    }
-
-    try {
-      const result = await this.automation.paraphrase(text, requestId);
-      this._status = "ready";
-      this._lastError = undefined;
-      return result;
-    } catch (error) {
-      this._lastError = error instanceof Error ? error.message : String(error);
-      // Don't set status to error here - let it try to recover
-      throw error;
-    } finally {
-      this.release();
-    }
+    return this.runWithLock(() => this.automation.paraphrase(text, requestId));
   }
 
   /**
@@ -182,48 +212,45 @@ export class AccountWorker {
     timeoutMs: number,
     requestId?: string,
   ): Promise<ParaphraseResult> {
-    if (!this.tryAcquire()) {
-      throw new Error(`[${this.accountId}] Worker is busy`);
-    }
+    return this.runWithLock(
+      async () => {
+        const operationPromise = this.automation.paraphrase(text, requestId);
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
-    try {
-      const operationPromise = this.automation.paraphrase(text, requestId);
-
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(
-            new TimeoutError(
-              `[${this.accountId}] Paraphrase timed out after ${timeoutMs}ms`,
-            ),
-          );
-        }, timeoutMs);
-      });
-
-      const result = await Promise.race([operationPromise, timeoutPromise]);
-      this._status = "ready";
-      this._lastError = undefined;
-      return result;
-    } catch (error) {
-      this._lastError = error instanceof Error ? error.message : String(error);
-
-      // On timeout, restart browser in background to kill stuck operation
-      if (error instanceof TimeoutError) {
-        console.log(
-          `[${this.accountId}] Timeout detected, restarting browser in background...`,
-        );
-        // Don't await - let it restart while we try fallback
-        this.restart().catch((restartErr) => {
-          console.error(
-            `[${this.accountId}] Background restart failed:`,
-            restartErr,
-          );
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(
+              new TimeoutError(
+                `[${this.accountId}] Paraphrase timed out after ${timeoutMs}ms`,
+              ),
+            );
+          }, timeoutMs);
         });
-      }
 
-      throw error;
-    } finally {
-      this.release();
-    }
+        try {
+          return await Promise.race([operationPromise, timeoutPromise]);
+        } finally {
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+          }
+        }
+      },
+      (error) => {
+        // On timeout, restart browser in background to kill stuck operation.
+        if (error instanceof TimeoutError) {
+          console.log(
+            `[${this.accountId}] Timeout detected, restarting browser in background...`,
+          );
+          // Don't await - let it restart while we try fallback.
+          this.restart().catch((restartErr) => {
+            console.error(
+              `[${this.accountId}] Background restart failed:`,
+              restartErr,
+            );
+          });
+        }
+      },
+    );
   }
 
   /**
@@ -233,24 +260,9 @@ export class AccountWorker {
     text: string,
     requestId?: string,
   ): Promise<string> {
-    if (!this.tryAcquire()) {
-      throw new Error(`[${this.accountId}] Worker is busy`);
-    }
-
-    try {
-      const result = await this.automation.paraphraseStandardMode(
-        text,
-        requestId,
-      );
-      this._status = "ready";
-      this._lastError = undefined;
-      return result;
-    } catch (error) {
-      this._lastError = error instanceof Error ? error.message : String(error);
-      throw error;
-    } finally {
-      this.release();
-    }
+    return this.runWithLock(() =>
+      this.automation.paraphraseStandardMode(text, requestId),
+    );
   }
 
   /**
