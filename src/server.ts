@@ -87,21 +87,46 @@ try {
 
 const headless = process.env.HEADLESS !== "false";
 const port = Number(process.env.PORT ?? 3000);
+const initRetryMs = Number(process.env.INIT_RETRY_MS ?? 30000);
 
 console.log(`Configured accounts: ${accounts.map((a) => a.email).join(", ")}`);
 console.log(`Headless mode: ${headless}`);
 
 const pool = new AccountPool(accounts, headless);
 
-const readyPromise = pool
-  .initAll()
-  .then(() => {
+let isInitializingPool = false;
+let initRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+const schedulePoolInitRetry = () => {
+  if (pool.isReady || initRetryTimer) {
+    return;
+  }
+
+  console.log(`Retrying account pool initialization in ${initRetryMs}ms...`);
+  initRetryTimer = setTimeout(() => {
+    initRetryTimer = null;
+    void initializePool();
+  }, initRetryMs);
+};
+
+const initializePool = async () => {
+  if (pool.isReady || isInitializingPool) {
+    return;
+  }
+
+  isInitializingPool = true;
+  try {
+    await pool.initAll();
     console.log("Account pool initialized and ready to accept requests.");
-  })
-  .catch((error) => {
+  } catch (error) {
     console.error("Unable to initialize account pool:", error);
-    process.exit(1);
-  });
+    schedulePoolInitRetry();
+  } finally {
+    isInitializingPool = false;
+  }
+};
+
+void initializePool();
 
 const app = express();
 app.use(cors());
@@ -200,6 +225,7 @@ app.get(
  */
 app.post("/paraphrase-batch", async (req: Request, res: Response) => {
   if (!pool.isReady) {
+    void initializePool();
     return res.status(503).json({
       error: "Account pool is not ready. Please wait for initialization.",
       ...pool.getStatus(),
@@ -239,7 +265,6 @@ app.post("/paraphrase-batch", async (req: Request, res: Response) => {
   );
 
   try {
-    await readyPromise;
     const response = await pool.processBatch(request);
     console.log("Batch request completed");
     res.json(response);
@@ -301,6 +326,11 @@ const server = app.listen(port, () => {
 
 const shutdown = async () => {
   console.log("Shutting down server...");
+
+  if (initRetryTimer) {
+    clearTimeout(initRetryTimer);
+    initRetryTimer = null;
+  }
 
   // Save cookies before disposing to preserve session for next startup
   try {
