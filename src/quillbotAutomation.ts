@@ -17,6 +17,7 @@ const QUILLBOT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 const MAX_PARAPHRASE_CLICK_ATTEMPTS = 2;
 const PARAPHRASE_START_TIMEOUT_MS = 10000;
+const PARAPHRASE_BUTTON_DISCOVERY_TIMEOUT_MS = 4000;
 const OUTPUT_SELECTORS = [
   '#paraphraser-output-box [data-testid="pphr/output_box/contenteditable"]',
   "#paraphraser-output-box .ql-editor",
@@ -45,6 +46,10 @@ const SELECTORS = {
     'button[data-testid="pphr/input_footer/paraphrase_button"]',
     '[data-testid="pphr/input_footer/paraphrase_button"]',
     'span[aria-label^="Paraphrase"] button',
+    'button[aria-label*="paraphrase" i]',
+    '[data-testid*="paraphrase" i]',
+    'button[data-testid*="paraphrase" i]',
+    'button[class*="paraphrase" i]',
     "#controlledInputBoxContainer > div.MuiBox-root.css-1a43h92 > div > div.MuiBox-root.css-n0jqrr > span > div > button",
     "#controlledInputBoxContainer > div.MuiBox-root.css-1buxzwp > div > div.MuiBox-root.css-1s1ozo1 > span > div > button",
   ],
@@ -723,7 +728,101 @@ export class QuillBotAutomation {
     await this.handleCookieConsent(page);
     await this.ensureMode(page, modeSelectors);
     await this.ensureInputWritable(page);
-    await this.waitForAnySelector(page, SELECTORS.paraphraseButton, this.timeout);
+    await this.ensureParaphraseActionReady(page, context);
+  }
+
+  private async ensureParaphraseActionReady(
+    page: Page,
+    context: string,
+  ): Promise<void> {
+    const button = await this.resolveParaphraseButton(
+      page,
+      PARAPHRASE_BUTTON_DISCOVERY_TIMEOUT_MS,
+    );
+
+    if (button) {
+      await button.dispose();
+      return;
+    }
+
+    this.log(
+      context,
+      "Preflight: paraphrase button selector drift detected, using keyboard shortcut fallback",
+    );
+  }
+
+  private async resolveParaphraseButton(
+    page: Page,
+    timeout: number,
+  ): Promise<ElementHandle<Element> | null> {
+    try {
+      return await this.waitForAnySelector(page, SELECTORS.paraphraseButton, timeout);
+    } catch {
+      // Continue with semantic fallback below.
+    }
+
+    try {
+      await page.waitForFunction(
+        () => {
+          const candidates = Array.from(
+            document.querySelectorAll("button, [role='button']"),
+          );
+          return candidates.some((el) => {
+            const text = (el.textContent || "").toLowerCase();
+            const aria = (el.getAttribute("aria-label") || "").toLowerCase();
+            const testId = (el.getAttribute("data-testid") || "").toLowerCase();
+            return (
+              text.includes("paraphrase") ||
+              text.includes("rephrase") ||
+              text.includes("rewrite") ||
+              aria.includes("paraphrase") ||
+              aria.includes("rephrase") ||
+              aria.includes("rewrite") ||
+              testId.includes("paraphrase") ||
+              testId.includes("rephrase") ||
+              testId.includes("rewrite")
+            );
+          });
+        },
+        { timeout },
+      );
+
+      const handle = await page.evaluateHandle(() => {
+        const candidates = Array.from(
+          document.querySelectorAll("button, [role='button']"),
+        );
+        for (const el of candidates) {
+          const text = (el.textContent || "").toLowerCase();
+          const aria = (el.getAttribute("aria-label") || "").toLowerCase();
+          const testId = (el.getAttribute("data-testid") || "").toLowerCase();
+          const isParaphraseAction =
+            text.includes("paraphrase") ||
+            text.includes("rephrase") ||
+            text.includes("rewrite") ||
+            aria.includes("paraphrase") ||
+            aria.includes("rephrase") ||
+            aria.includes("rewrite") ||
+            testId.includes("paraphrase") ||
+            testId.includes("rephrase") ||
+            testId.includes("rewrite");
+
+          if (isParaphraseAction) {
+            return el;
+          }
+        }
+        return null;
+      });
+
+      const element = handle.asElement();
+      if (!element) {
+        await handle.dispose();
+        return null;
+      }
+
+      return element as unknown as ElementHandle<Element>;
+    } catch {
+      return null;
+    }
   }
 
   private async softResetForMode(
@@ -1010,14 +1109,11 @@ export class QuillBotAutomation {
   }
 
   private async triggerParaphrase(page: Page): Promise<void> {
-    let button: ElementHandle<Element> | undefined;
-    try {
-      button = await this.waitForAnySelector(
-        page,
-        SELECTORS.paraphraseButton,
-        this.timeout,
-      );
-    } catch (error) {
+    const button = await this.resolveParaphraseButton(
+      page,
+      PARAPHRASE_BUTTON_DISCOVERY_TIMEOUT_MS,
+    );
+    if (!button) {
       // QuillBot frequently changes generated classnames; fall back to the
       // tooltip shortcut when the button selector drifts.
       console.log(
@@ -1095,6 +1191,12 @@ export class QuillBotAutomation {
         }`,
       );
       await this.pressParaphraseShortcut(page);
+    } finally {
+      try {
+        await button.dispose();
+      } catch {
+        // no-op
+      }
     }
   }
 
