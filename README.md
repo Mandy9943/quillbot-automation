@@ -8,6 +8,7 @@ Multi-account QuillBot browser-automation service (3 accounts, 3 browsers) with 
 - Supports:
   - `dual` mode (Simple -> Shorten)
   - `standard` mode
+  - `ludicrous` mode (single-pass fastest profile)
 - Keeps QuillBot UI action flow intact (same selectors/button order), while improving reliability and throughput around scheduling/retries/recovery.
 
 ## Key Reliability/Speed Features
@@ -60,7 +61,7 @@ Basic liveness + pool status.
 Detailed worker + scheduler state, including:
 - per-account health/cooldown/ewma rates
 - rolling throughput/success/fallback/restart stats
-- recommended budgets (`dual`, `standard`, and per-account)
+- recommended budgets (`dual`, `standard`, `ludicrous`, and per-account)
 
 ### `POST /paraphrase-batch`
 Request body:
@@ -77,7 +78,7 @@ Request body:
 
 Notes:
 - At least one of `acc1`, `acc2`, `acc3` is required.
-- `mode`: `dual` (default) or `standard`.
+- `mode`: `dual` (default), `standard`, or `ludicrous`.
 - `strict`:
   - `false` (default): partial success allowed.
   - `true`: any failed slot returns full batch failure (HTTP 502).

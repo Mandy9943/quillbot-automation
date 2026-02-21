@@ -23,13 +23,14 @@ const HEALTH_TO_TRIPPED_FAILURES = 4;
 const DEGRADED_TO_HEALTHY_SUCCESSES = 6;
 
 const EWMA_ALPHA = 0.2;
-const FALLBACK_WAIT_TIMEOUT_MS = 45000;
+const FALLBACK_WAIT_TIMEOUT_MS = 12000;
 const JITTER_MIN_MS = 100;
 const JITTER_MAX_MS = 300;
 
 const MODE_TARGET_SECONDS: Record<ParaphraseMode, number> = {
   dual: 18,
   standard: 9,
+  ludicrous: 7,
 };
 
 const MODE_BUDGET_BOUNDS: Record<
@@ -38,11 +39,13 @@ const MODE_BUDGET_BOUNDS: Record<
 > = {
   dual: { min: 280, max: 760, initial: 520 },
   standard: { min: 500, max: 1400, initial: 950 },
+  ludicrous: { min: 700, max: 2000, initial: 1300 },
 };
 
 const MODE_BASE_COOLDOWN_MS: Record<ParaphraseMode, number> = {
   dual: 1200,
   standard: 600,
+  ludicrous: 250,
 };
 
 const HEALTH_PENALTY_MS: Record<SchedulerHealthState, number> = {
@@ -123,7 +126,7 @@ interface RollingRecord {
   errorCode?: AutomationErrorCode;
 }
 
-export type ParaphraseMode = "dual" | "standard";
+export type ParaphraseMode = "dual" | "standard" | "ludicrous";
 
 export interface BatchRequest {
   acc1?: string;
@@ -158,17 +161,22 @@ export interface SchedulerAccountStatus {
   health: SchedulerHealthState;
   cooldownMsDual: number;
   cooldownMsStandard: number;
+  cooldownMsLudicrous: number;
   pendingLoadMs: number;
   activeJobs: number;
   waitQueueDepth: number;
   ewmaWordsPerSecondDual: number;
   ewmaWordsPerSecondStandard: number;
+  ewmaWordsPerSecondLudicrous: number;
   successRateDual: number;
   successRateStandard: number;
+  successRateLudicrous: number;
   retryRateDual: number;
   retryRateStandard: number;
+  retryRateLudicrous: number;
   timeoutRateDual: number;
   timeoutRateStandard: number;
+  timeoutRateLudicrous: number;
   trippedUntil: number | null;
   restartCount: number;
 }
@@ -176,7 +184,8 @@ export interface SchedulerAccountStatus {
 export interface SchedulerRecommendedBudgets {
   dual: number;
   standard: number;
-  perAccount: Record<AccountId, { dual: number; standard: number }>;
+  ludicrous: number;
+  perAccount: Record<AccountId, { dual: number; standard: number; ludicrous: number }>;
 }
 
 export interface SchedulerRollingStats {
@@ -339,14 +348,17 @@ export class AccountPool {
       cooldownUntilByMode: {
         dual: 0,
         standard: 0,
+        ludicrous: 0,
       },
       dynamicCooldownByMode: {
         dual: this.baseCooldownMs("dual"),
         standard: this.baseCooldownMs("standard"),
+        ludicrous: this.baseCooldownMs("ludicrous"),
       },
       modeStats: {
         dual: this.createInitialModeRuntime("dual"),
         standard: this.createInitialModeRuntime("standard"),
+        ludicrous: this.createInitialModeRuntime("ludicrous"),
       },
       totalAttempts: 0,
       totalSuccess: 0,
@@ -391,6 +403,20 @@ export class AccountPool {
       error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
 
     if (
+      message.includes("tripped until") ||
+      message.includes("waitforavailable timed out")
+    ) {
+      return "E_THROTTLED";
+    }
+
+    if (
+      message.includes("worker is initializing") ||
+      message.includes("worker is in error state")
+    ) {
+      return "E_RESTART_FAILED";
+    }
+
+    if (
       message.includes("rate limit") ||
       message.includes("too many") ||
       message.includes("429") ||
@@ -425,6 +451,44 @@ export class AccountPool {
     }
 
     return "E_UNKNOWN";
+  }
+
+  private getUnavailableReason(accountId: AccountId): string | null {
+    const worker = this.workers[accountId];
+    const runtime = this.runtime[accountId];
+    const now = Date.now();
+
+    if (runtime.health === "tripped" && now < runtime.trippedUntil) {
+      return `[${accountId}] Account is tripped until ${new Date(runtime.trippedUntil).toISOString()}`;
+    }
+
+    if (worker.status === "initializing") {
+      return `[${accountId}] Worker is initializing`;
+    }
+
+    if (worker.status === "error") {
+      return `[${accountId}] Worker is in error state`;
+    }
+
+    return null;
+  }
+
+  private shouldUpdateHealthOnFailure(errorMessage: string): boolean {
+    const lowered = errorMessage.toLowerCase();
+    if (lowered.includes("tripped until")) return false;
+    if (lowered.includes("worker is initializing")) return false;
+    if (lowered.includes("worker is in error state")) return false;
+    if (lowered.includes("waitforavailable timed out")) return false;
+    return true;
+  }
+
+  private isRetryableFailure(errorMessage: string): boolean {
+    const lowered = errorMessage.toLowerCase();
+    if (lowered.includes("tripped until")) return false;
+    if (lowered.includes("worker is initializing")) return false;
+    if (lowered.includes("worker is in error state")) return false;
+    if (lowered.includes("waitforavailable timed out")) return false;
+    return true;
   }
 
   private shouldUseTimeout(words: number, mode: ParaphraseMode): boolean {
@@ -546,12 +610,9 @@ export class AccountPool {
   ): Promise<void> {
     const worker = this.workers[accountId];
     const runtime = this.runtime[accountId];
-
-    const now = Date.now();
-    if (runtime.health === "tripped" && now < runtime.trippedUntil) {
-      throw new Error(
-        `[${accountId}] Account is tripped until ${new Date(runtime.trippedUntil).toISOString()}`,
-      );
+    const unavailableReason = this.getUnavailableReason(accountId);
+    if (unavailableReason) {
+      throw new Error(unavailableReason);
     }
 
     if (!worker.isAvailable) {
@@ -565,6 +626,11 @@ export class AccountPool {
       ]);
     }
 
+    const unavailableAfterWait = this.getUnavailableReason(accountId);
+    if (unavailableAfterWait) {
+      throw new Error(unavailableAfterWait);
+    }
+
     const cooldownWaitMs = Math.max(0, runtime.cooldownUntilByMode[mode] - Date.now());
     if (cooldownWaitMs > 0) {
       await delay(cooldownWaitMs);
@@ -572,6 +638,26 @@ export class AccountPool {
 
     const jitter = Math.floor(Math.random() * (JITTER_MAX_MS - JITTER_MIN_MS + 1)) + JITTER_MIN_MS;
     await delay(jitter);
+  }
+
+  private resetRuntimeAfterRestart(accountId: AccountId): void {
+    const runtime = this.runtime[accountId];
+    runtime.health = "healthy";
+    runtime.trippedUntil = 0;
+    runtime.failureTimestamps = [];
+    runtime.consecutiveSuccesses = 0;
+    runtime.pendingLoadMs = 0;
+    runtime.activeJobs = 0;
+    runtime.cooldownUntilByMode = {
+      dual: 0,
+      standard: 0,
+      ludicrous: 0,
+    };
+    runtime.dynamicCooldownByMode = {
+      dual: this.baseCooldownMs("dual"),
+      standard: this.baseCooldownMs("standard"),
+      ludicrous: this.baseCooldownMs("ludicrous"),
+    };
   }
 
   private updateCooldownOnFailure(
@@ -710,7 +796,7 @@ export class AccountPool {
     requestId: string,
     useTimeout: boolean,
   ): Promise<WorkerOutput> {
-    if (mode === "standard") {
+    if (mode !== "dual") {
       return worker.paraphraseStandardMode(text, requestId).then((result) => ({
         result,
       }));
@@ -880,6 +966,28 @@ export class AccountPool {
 
     for (let candidateIndex = 0; candidateIndex < dedupedCandidates.length; candidateIndex++) {
       const accountId = dedupedCandidates[candidateIndex];
+      const unavailableReason = this.getUnavailableReason(accountId);
+      if (unavailableReason) {
+        lastErrorMessage = unavailableReason;
+        lastErrorCode = this.classifyErrorCode(unavailableReason);
+
+        this.logSlotEvent({
+          requestId,
+          slotKey: slot.slotKey,
+          accountUsed: accountId,
+          mode,
+          words,
+          queueWaitMs,
+          processingMs,
+          attempts,
+          fallbackChain,
+          outcome: "attempt_skipped",
+          errorCode: lastErrorCode,
+          error: unavailableReason,
+        });
+        continue;
+      }
+
       const localRetryCount = candidateIndex === 0 ? 2 : 1;
 
       for (let localRetry = 0; localRetry < localRetryCount; localRetry++) {
@@ -965,7 +1073,9 @@ export class AccountPool {
             processingMs += attemptError.processingMs;
           }
 
-          this.updateHealthOnFailure(accountId, mode, errorCode);
+          if (this.shouldUpdateHealthOnFailure(message)) {
+            this.updateHealthOnFailure(accountId, mode, errorCode);
+          }
 
           if (errorCode === "E_THROTTLED") {
             this.runtime[accountId].modeStats[mode].noThrottleSuccessCount = 0;
@@ -985,6 +1095,10 @@ export class AccountPool {
             errorCode,
             error: message,
           });
+
+          if (!this.isRetryableFailure(message)) {
+            break;
+          }
         }
       }
     }
@@ -1063,18 +1177,21 @@ export class AccountPool {
   }
 
   private getRecommendedBudgets(): SchedulerRecommendedBudgets {
-    const perAccount: Record<AccountId, { dual: number; standard: number }> = {
+    const perAccount: Record<AccountId, { dual: number; standard: number; ludicrous: number }> = {
       acc1: {
         dual: this.recommendedBudgetForAccount("acc1", "dual"),
         standard: this.recommendedBudgetForAccount("acc1", "standard"),
+        ludicrous: this.recommendedBudgetForAccount("acc1", "ludicrous"),
       },
       acc2: {
         dual: this.recommendedBudgetForAccount("acc2", "dual"),
         standard: this.recommendedBudgetForAccount("acc2", "standard"),
+        ludicrous: this.recommendedBudgetForAccount("acc2", "ludicrous"),
       },
       acc3: {
         dual: this.recommendedBudgetForAccount("acc3", "dual"),
         standard: this.recommendedBudgetForAccount("acc3", "standard"),
+        ludicrous: this.recommendedBudgetForAccount("acc3", "ludicrous"),
       },
     };
 
@@ -1087,10 +1204,17 @@ export class AccountPool {
         perAccount.acc3.standard) /
         3,
     );
+    const ludicrousAverage = Math.round(
+      (perAccount.acc1.ludicrous +
+        perAccount.acc2.ludicrous +
+        perAccount.acc3.ludicrous) /
+        3,
+    );
 
     return {
       dual: dualAverage,
       standard: standardAverage,
+      ludicrous: ludicrousAverage,
       perAccount,
     };
   }
@@ -1153,17 +1277,22 @@ export class AccountPool {
       health: runtime.health,
       cooldownMsDual: Math.max(0, runtime.cooldownUntilByMode.dual - now),
       cooldownMsStandard: Math.max(0, runtime.cooldownUntilByMode.standard - now),
+      cooldownMsLudicrous: Math.max(0, runtime.cooldownUntilByMode.ludicrous - now),
       pendingLoadMs: runtime.pendingLoadMs,
       activeJobs: runtime.activeJobs,
       waitQueueDepth: worker.waitQueueDepth,
       ewmaWordsPerSecondDual: runtime.modeStats.dual.ewmaWordsPerSecond,
       ewmaWordsPerSecondStandard: runtime.modeStats.standard.ewmaWordsPerSecond,
+      ewmaWordsPerSecondLudicrous: runtime.modeStats.ludicrous.ewmaWordsPerSecond,
       successRateDual: runtime.modeStats.dual.ewmaSuccessRate,
       successRateStandard: runtime.modeStats.standard.ewmaSuccessRate,
+      successRateLudicrous: runtime.modeStats.ludicrous.ewmaSuccessRate,
       retryRateDual: runtime.modeStats.dual.ewmaRetryRate,
       retryRateStandard: runtime.modeStats.standard.ewmaRetryRate,
+      retryRateLudicrous: runtime.modeStats.ludicrous.ewmaRetryRate,
       timeoutRateDual: runtime.modeStats.dual.ewmaTimeoutRate,
       timeoutRateStandard: runtime.modeStats.standard.ewmaTimeoutRate,
+      timeoutRateLudicrous: runtime.modeStats.ludicrous.ewmaTimeoutRate,
       trippedUntil:
         runtime.health === "tripped" && runtime.trippedUntil > now
           ? runtime.trippedUntil
@@ -1348,6 +1477,7 @@ export class AccountPool {
     }
 
     await this.workers[accountId].restart();
+    this.resetRuntimeAfterRestart(accountId);
     this.trackRestartDelta(accountId);
   }
 
@@ -1374,6 +1504,7 @@ export class AccountPool {
     for (const result of results) {
       if (result.success) {
         successCount += 1;
+        this.resetRuntimeAfterRestart(result.accountId);
         this.trackRestartDelta(result.accountId);
       }
     }

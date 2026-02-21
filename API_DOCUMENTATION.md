@@ -111,7 +111,8 @@ COOLDOWN_PROFILE=balanced
     "cooldownProfile": "balanced",
     "recommendedBudgets": {
       "dual": 540,
-      "standard": 990
+      "standard": 990,
+      "ludicrous": 1260
     },
     "rolling": {
       "throughputWordsPerMinute": 4120,
@@ -158,7 +159,7 @@ COOLDOWN_PROFILE=balanced
 | `acc1`      | string  | No\*     | Text for account 1 slot                                                       |
 | `acc2`      | string  | No\*     | Text for account 2 slot                                                       |
 | `acc3`      | string  | No\*     | Text for account 3 slot                                                       |
-| `mode`      | string  | No       | `"dual"` (default) or `"standard"`                                            |
+| `mode`      | string  | No       | `"dual"` (default), `"standard"`, or `"ludicrous"`                            |
 | `strict`    | boolean | No       | `true` = all-or-nothing (any failed slot fails full batch with HTTP `502`)   |
 | `requestId` | string  | No       | Client trace/idempotency id echoed back in `meta.requestId`                   |
 
@@ -170,6 +171,7 @@ COOLDOWN_PROFILE=balanced
 | ---------- | ------------------ | ------ | ------- | ------------------------- |
 | `dual`     | Simple → Shorten   | 2      | ~15-16s | `firstMode`, `secondMode` |
 | `standard` | Standard mode only | 1      | ~5-6s   | `result`                  |
+| `ludicrous` | Single-pass fastest profile | 1 | ~3-5s | `result` |
 
 ---
 
@@ -380,7 +382,7 @@ const response = await fetch("https://your-new-domain.com/paraphrase-batch", {
     acc1: text1, // Previously handled by analizeai.com
     acc2: text2, // Previously handled by v2.analizeai.com
     acc3: text3, // Previously handled by v3.analizeai.com
-    mode: "dual", // or 'standard'
+    mode: "dual", // or 'standard' / 'ludicrous'
   }),
 });
 

@@ -14,7 +14,7 @@ import { AccountConfig } from "./accountWorker";
 
 dotenv.config();
 
-const VALID_MODES = ["dual", "standard"] as const;
+const VALID_MODES = ["dual", "standard", "ludicrous"] as const;
 const VALID_MODE_SET = new Set<string>(VALID_MODES);
 const VALID_ACCOUNT_IDS = ["acc1", "acc2", "acc3"] as const;
 const VALID_ACCOUNT_ID_SET = new Set<string>(VALID_ACCOUNT_IDS);
@@ -236,7 +236,8 @@ app.get(
  *   acc1?: string,
  *   acc2?: string,
  *   acc3?: string,
- *   mode?: "dual" | "standard"  // "dual" = Simple→Shorten (default), "standard" = Standard mode only
+ *   mode?: "dual" | "standard" | "ludicrous"
+ *   // "dual" = Simple→Shorten (default), "standard"/"ludicrous" = single-pass mode
  * }
  * At least one account text must be provided.
  *
@@ -247,7 +248,7 @@ app.get(
  * }
  *
  * For mode="dual": Returns firstMode and secondMode
- * For mode="standard": Returns result
+ * For mode="standard" or mode="ludicrous": Returns result
  */
 app.post("/paraphrase-batch", async (req: Request, res: Response) => {
   if (!pool.isReady) {
