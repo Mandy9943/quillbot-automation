@@ -1,140 +1,119 @@
 # QuillBot Automation API
 
-This project exposes an Express API that keeps a single puppeteer-driven QuillBot session alive. The browser logs in once, stays on the paraphrasing page, and every request reuses the session to paraphrase the provided text through the two modes described in the original script.
+Multi-account QuillBot browser-automation service (3 accounts, 3 browsers) with adaptive scheduling, fallback routing, and strict-mode batch control.
 
-## Features
+## What It Does
+- Runs 3 persistent Puppeteer workers (`acc1`, `acc2`, `acc3`).
+- Exposes one API endpoint (`POST /paraphrase-batch`) for parallel paraphrasing.
+- Supports:
+  - `dual` mode (Simple -> Shorten)
+  - `standard` mode
+- Keeps QuillBot UI action flow intact (same selectors/button order), while improving reliability and throughput around scheduling/retries/recovery.
 
-- **Persistent browser**: Launches Chromium once, logs into QuillBot, and keeps the session open for subsequent requests.
-- **Two-step paraphrasing**: Mimics the manual workflow—paraphrases the incoming text in mode 1, copies the output, feeds it into mode 2, and returns both results.
-- **Queueing & serialization**: Requests are processed sequentially to avoid DOM race conditions while reusing the same page.
-- **Health endpoint**: Quickly verify that the browser session finished bootstrapping.
+## Key Reliability/Speed Features
+- Adaptive account scheduler (score-based account selection)
+- Per-account pacing with cooldown + jitter
+- Health state machine (`healthy`, `degraded`, `tripped`)
+- Local retry + cross-account fallback chain
+- Optional strict all-or-nothing response mode (`strict=true`)
+- Structured per-slot telemetry + rolling performance metrics
+- Recommended word budgets exposed in `/status`
 
 ## Requirements
-
 - Node.js 18+
-- A QuillBot account with credentials that can log in without MFA/CAPTCHA prompts.
-- The ability to run Chromium headless (usually works out-of-the-box on Linux servers with Puppeteer).
+- 3 QuillBot accounts (no forced MFA/CAPTCHA blockers)
+- Chromium-compatible runtime (Docker image includes required deps)
 
 ## Setup
+```bash
+npm install
+cp .env.example .env
+```
 
-1. Install dependencies:
+Required env:
+- `QUILLBOT_ACCOUNTS` JSON array with exactly 3 accounts
 
-   ```bash
-   npm install
-   ```
+Optional env:
+- `QUILLBOT_ACCOUNTS_BASE64`
+- `PORT` (default `3000`)
+- `HEADLESS` (default `true`)
+- `INIT_RETRY_MS` (default `30000`)
+- `SCHEDULER_ADAPTIVE` (`true` by default)
+- `STRICT_MODE_DEFAULT` (`false` by default)
+- `COOLDOWN_PROFILE` (`balanced`, `max_speed`, `max_stability`)
 
-2. Create a `.env` file based on `.env.example`:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   | Variable | Description |
-   | --- | --- |
-   | `QUILLBOT_EMAIL` | Account email used to log in. |
-   | `QUILLBOT_PASSWORD` | Account password. |
-   | `PORT` | Port for the Express server (default `3000`). |
-   | `HEADLESS` | Set to `false` for debugging with a visible browser. |
-
-## Running
-
-### Local Development (ts-node)
-
+## Run
 ```bash
 npm run dev
 ```
-
-### Production Build + Start
 
 ```bash
 npm run build
 npm start
 ```
 
-### Docker (Recommended for Production)
-
-The application is fully containerized with all Chromium dependencies included.
-
-1. **Build and run with Docker Compose:**
-
-   ```bash
-   docker-compose up --build
-   ```
-
-   The API will be available at `http://localhost:3000`.
-
-2. **Or build and run manually:**
-
-   ```bash
-   # Build the image
-   docker build -t quillbot-automation .
-   
-   # Run the container
-   docker run -d \
-     -p 3000:3000 \
-     -e QUILLBOT_EMAIL="your_email@example.com" \
-     -e QUILLBOT_PASSWORD="your_password" \
-     -e HEADLESS=true \
-     --shm-size=2gb \
-     --cap-add=SYS_ADMIN \
-     --name quillbot-automation \
-     quillbot-automation
-   ```
-
-3. **Check logs:**
-
-   ```bash
-   docker logs -f quillbot-automation
-   ```
-
-4. **Stop the container:**
-
-   ```bash
-   docker-compose down
-   # or
-   docker stop quillbot-automation
-   ```
-
-**Note:** The Docker image includes Chromium and all required system libraries, ensuring consistent behavior across environments (local, cloud, CI/CD).
-
 ## API
-
 ### `GET /health`
+Basic liveness + pool status.
 
-Returns `{ status: "ok", ready: boolean }` so you can wait until the initial login completes.
+### `GET /status`
+Detailed worker + scheduler state, including:
+- per-account health/cooldown/ewma rates
+- rolling throughput/success/fallback/restart stats
+- recommended budgets (`dual`, `standard`, and per-account)
 
-### `POST /paraphrase`
-
-Body:
-
+### `POST /paraphrase-batch`
+Request body:
 ```json
 {
-  "text": "String with the content to paraphrase"
+  "acc1": "text...",
+  "acc2": "text...",
+  "acc3": "text...",
+  "mode": "dual",
+  "strict": false,
+  "requestId": "client-job-123"
 }
 ```
 
-Response:
+Notes:
+- At least one of `acc1`, `acc2`, `acc3` is required.
+- `mode`: `dual` (default) or `standard`.
+- `strict`:
+  - `false` (default): partial success allowed.
+  - `true`: any failed slot returns full batch failure (HTTP 502).
 
+Success response includes per-slot results plus:
 ```json
 {
-  "inputLength": 123,
-  "firstMode": "...",
-  "secondMode": "..."
+  "meta": {
+    "requestId": "...",
+    "mode": "dual",
+    "strict": false,
+    "totalSlots": 3,
+    "successSlots": 3,
+    "failedSlots": 0,
+    "fallbackSlots": 1,
+    "totalAttempts": 4,
+    "totalWords": 1320,
+    "durationMs": 18123
+  }
 }
 ```
 
-Errors return a JSON payload with an `error` field and an appropriate HTTP status code.
+Per-slot telemetry fields:
+- `accountUsed`
+- `attempts`
+- `queueWaitMs`
+- `processingMs`
+- `errorCode`
+- `fallbackUsed`
+- `fallbackChain`
 
-## How it works
+## Docker
+```bash
+docker-compose up --build
+```
 
-- `QuillBotAutomation` (see `src/quillbotAutomation.ts`) owns the Puppeteer browser.
-- On startup, it logs in, lands on the paraphraser page, selects the first mode, and grants clipboard permissions.
-- Incoming requests are enqueued so they run one-at-a-time against the same tab.
-- The original manual flow (type text → paraphrase → copy → switch mode → clear → paste → paraphrase → copy) is reproduced step by step.
-
-## Next steps / ideas
-
-- Persist cookies/session on disk to survive restarts.
-- Add retries for transient DOM failures or selector drift.
-- Stream the paraphrase progress back to the client.
-- Replace hard-coded selectors with a more resilient lookup strategy.
+## Notes
+- This service intentionally does not use QuillBot private APIs.
+- Browser interaction sequence is preserved; optimizations are scheduler/recovery/telemetry-side.

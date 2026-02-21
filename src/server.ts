@@ -4,7 +4,12 @@ import express, { Request, Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
 
-import { AccountPool, BatchRequest } from "./accountPool";
+import {
+  AccountPool,
+  AccountPoolOptions,
+  BatchRequest,
+  StrictBatchError,
+} from "./accountPool";
 import { AccountConfig } from "./accountWorker";
 
 dotenv.config();
@@ -13,12 +18,20 @@ const VALID_MODES = ["dual", "standard"] as const;
 const VALID_MODE_SET = new Set<string>(VALID_MODES);
 const VALID_ACCOUNT_IDS = ["acc1", "acc2", "acc3"] as const;
 const VALID_ACCOUNT_ID_SET = new Set<string>(VALID_ACCOUNT_IDS);
+const VALID_COOLDOWN_PROFILES = [
+  "balanced",
+  "max_speed",
+  "max_stability",
+] as const;
+const VALID_COOLDOWN_PROFILE_SET = new Set<string>(VALID_COOLDOWN_PROFILES);
 
 interface BatchRequestBody {
   acc1?: unknown;
   acc2?: unknown;
   acc3?: unknown;
   mode?: unknown;
+  strict?: unknown;
+  requestId?: unknown;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -88,11 +101,24 @@ try {
 const headless = process.env.HEADLESS !== "false";
 const port = Number(process.env.PORT ?? 3000);
 const initRetryMs = Number(process.env.INIT_RETRY_MS ?? 30000);
+const schedulerAdaptive = process.env.SCHEDULER_ADAPTIVE !== "false";
+const strictModeDefault = process.env.STRICT_MODE_DEFAULT === "true";
+const rawCooldownProfile = (process.env.COOLDOWN_PROFILE ?? "balanced").trim();
+const cooldownProfile = VALID_COOLDOWN_PROFILE_SET.has(rawCooldownProfile)
+  ? (rawCooldownProfile as AccountPoolOptions["cooldownProfile"])
+  : "balanced";
 
 console.log(`Configured accounts: ${accounts.map((a) => a.email).join(", ")}`);
 console.log(`Headless mode: ${headless}`);
+console.log(
+  `Scheduler adaptive: ${schedulerAdaptive}, strict default: ${strictModeDefault}, cooldown profile: ${cooldownProfile}`,
+);
 
-const pool = new AccountPool(accounts, headless);
+const pool = new AccountPool(accounts, headless, {
+  schedulerAdaptive,
+  strictModeDefault,
+  cooldownProfile,
+});
 
 let isInitializingPool = false;
 let initRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -233,7 +259,7 @@ app.post("/paraphrase-batch", async (req: Request, res: Response) => {
   }
 
   const body = (req.body ?? {}) as BatchRequestBody;
-  const { acc1, acc2, acc3, mode } = body;
+  const { acc1, acc2, acc3, mode, strict, requestId } = body;
 
   // Validate mode
   if (mode && (typeof mode !== "string" || !VALID_MODE_SET.has(mode))) {
@@ -243,6 +269,21 @@ app.post("/paraphrase-batch", async (req: Request, res: Response) => {
   }
 
   const resolvedMode = (mode || "dual") as BatchRequest["mode"];
+
+  if (strict !== undefined && typeof strict !== "boolean") {
+    return res.status(400).json({
+      error: "Invalid strict flag. Must be boolean.",
+    });
+  }
+
+  if (
+    requestId !== undefined &&
+    (typeof requestId !== "string" || requestId.trim().length === 0)
+  ) {
+    return res.status(400).json({
+      error: "Invalid requestId. Must be a non-empty string.",
+    });
+  }
 
   // Validate input
   const hasAcc1 = isNonEmptyString(acc1);
@@ -259,9 +300,17 @@ app.post("/paraphrase-batch", async (req: Request, res: Response) => {
   if (hasAcc1) request.acc1 = acc1;
   if (hasAcc2) request.acc2 = acc2;
   if (hasAcc3) request.acc3 = acc3;
+  if (typeof strict === "boolean") request.strict = strict;
+  if (typeof requestId === "string") request.requestId = requestId.trim();
 
   console.log(
-    `Received batch request (mode=${resolvedMode}): acc1=${hasAcc1 ? acc1.length + " chars" : "none"}, acc2=${hasAcc2 ? acc2.length + " chars" : "none"}, acc3=${hasAcc3 ? acc3.length + " chars" : "none"}`,
+    `Received batch request (mode=${resolvedMode}, strict=${
+      request.strict ?? strictModeDefault
+    }, requestId=${request.requestId || "auto"}): acc1=${
+      hasAcc1 ? acc1.length + " chars" : "none"
+    }, acc2=${hasAcc2 ? acc2.length + " chars" : "none"}, acc3=${
+      hasAcc3 ? acc3.length + " chars" : "none"
+    }`,
   );
 
   try {
@@ -269,6 +318,14 @@ app.post("/paraphrase-batch", async (req: Request, res: Response) => {
     console.log("Batch request completed");
     res.json(response);
   } catch (error) {
+    if (error instanceof StrictBatchError) {
+      console.error("Batch request failed in strict mode");
+      return res.status(502).json({
+        error: "Strict batch failed: one or more slots failed",
+        ...error.payload,
+      });
+    }
+
     console.error("Batch request failed:", error);
     res.status(500).json({
       error: "Failed to process batch request.",

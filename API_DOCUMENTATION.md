@@ -34,6 +34,20 @@ This service consolidates **3 QuillBot accounts** into a **single service instan
 - Built-in parallel processing
 - Automatic FIFO fallback on failure
 
+### Latest Additions
+
+- Adaptive scheduler and per-account pacing
+- Health-state routing (`healthy`, `degraded`, `tripped`)
+- Optional strict mode (`strict=true`) for all-or-nothing batch behavior
+- Caller trace id support (`requestId`)
+- Batch-level `meta` and per-slot telemetry fields:
+  - `accountUsed`
+  - `attempts`
+  - `queueWaitMs`
+  - `processingMs`
+  - `errorCode`
+  - `fallbackChain`
+
 ---
 
 ## Configuration
@@ -46,6 +60,12 @@ QUILLBOT_ACCOUNTS=[{"email":"account1@example.com","password":"pass1"},{"email":
 
 PORT=3090
 HEADLESS=true
+INIT_RETRY_MS=30000
+
+# Scheduler controls
+SCHEDULER_ADAPTIVE=true
+STRICT_MODE_DEFAULT=false
+COOLDOWN_PROFILE=balanced
 ```
 
 ---
@@ -85,7 +105,23 @@ HEADLESS=true
   "acc1": { "status": "ready", "lastError": null },
   "acc2": { "status": "busy", "lastError": null },
   "acc3": { "status": "error", "lastError": "Session expired" },
-  "ready": true
+  "ready": true,
+  "scheduler": {
+    "adaptiveEnabled": true,
+    "cooldownProfile": "balanced",
+    "recommendedBudgets": {
+      "dual": 540,
+      "standard": 990
+    },
+    "rolling": {
+      "throughputWordsPerMinute": 4120,
+      "successRatio": 0.98,
+      "p50DurationMs": 12100,
+      "p95DurationMs": 29400,
+      "fallbackRate": 0.06,
+      "restartRatePerMinute": 0
+    }
+  }
 }
 ```
 
@@ -111,16 +147,20 @@ HEADLESS=true
   "acc1": "Text to paraphrase using account 1...",
   "acc2": "Text to paraphrase using account 2...",
   "acc3": "Text to paraphrase using account 3...",
-  "mode": "dual"
+  "mode": "dual",
+  "strict": false,
+  "requestId": "client-job-123"
 }
 ```
 
-| Field  | Type   | Required | Description                        |
-| ------ | ------ | -------- | ---------------------------------- |
-| `acc1` | string | No\*     | Text for account 1 to paraphrase   |
-| `acc2` | string | No\*     | Text for account 2 to paraphrase   |
-| `acc3` | string | No\*     | Text for account 3 to paraphrase   |
-| `mode` | string | No       | `"dual"` (default) or `"standard"` |
+| Field       | Type    | Required | Description                                                                   |
+| ----------- | ------- | -------- | ----------------------------------------------------------------------------- |
+| `acc1`      | string  | No\*     | Text for account 1 slot                                                       |
+| `acc2`      | string  | No\*     | Text for account 2 slot                                                       |
+| `acc3`      | string  | No\*     | Text for account 3 slot                                                       |
+| `mode`      | string  | No       | `"dual"` (default) or `"standard"`                                            |
+| `strict`    | boolean | No       | `true` = all-or-nothing (any failed slot fails full batch with HTTP `502`)   |
+| `requestId` | string  | No       | Client trace/idempotency id echoed back in `meta.requestId`                   |
 
 \* At least one of `acc1`, `acc2`, or `acc3` must be provided.
 
@@ -140,17 +180,44 @@ HEADLESS=true
   "acc1": {
     "firstMode": "First pass paraphrased text (Simple mode)",
     "secondMode": "Second pass paraphrased text (Shorten mode)",
-    "durationMs": 15234
+    "durationMs": 15234,
+    "accountUsed": "acc1",
+    "attempts": 1,
+    "queueWaitMs": 243,
+    "processingMs": 14890
   },
   "acc2": {
     "firstMode": "First pass paraphrased text",
     "secondMode": "Second pass paraphrased text",
-    "durationMs": 15456
+    "durationMs": 15456,
+    "accountUsed": "acc3",
+    "fallbackUsed": "acc3",
+    "fallbackChain": ["acc3"],
+    "attempts": 2,
+    "queueWaitMs": 421,
+    "processingMs": 15002,
+    "errorCode": "E_THROTTLED"
   },
   "acc3": {
     "firstMode": "First pass paraphrased text",
     "secondMode": "Second pass paraphrased text",
-    "durationMs": 15123
+    "durationMs": 15123,
+    "accountUsed": "acc2",
+    "attempts": 1,
+    "queueWaitMs": 205,
+    "processingMs": 14670
+  },
+  "meta": {
+    "requestId": "client-job-123",
+    "mode": "dual",
+    "strict": false,
+    "totalSlots": 3,
+    "successSlots": 3,
+    "failedSlots": 0,
+    "fallbackSlots": 1,
+    "totalAttempts": 4,
+    "totalWords": 1360,
+    "durationMs": 17789
   }
 }
 ```

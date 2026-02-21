@@ -24,11 +24,27 @@ export interface AccountWorkerResult {
   durationMs: number;
   error?: string;
   fallbackUsed?: string;
+  accountUsed?: string;
+  attempts?: number;
+  queueWaitMs?: number;
+  processingMs?: number;
+  errorCode?: string;
+  fallbackChain?: string[];
 }
 
 interface Waiter {
   resolve: () => void;
   reject: (err: Error) => void;
+}
+
+export interface AccountWorkerSnapshot {
+  accountId: string;
+  status: AccountStatus;
+  lastError?: string;
+  isBusy: boolean;
+  isAvailable: boolean;
+  waitQueueDepth: number;
+  restartCount: number;
 }
 
 export class AccountWorker {
@@ -68,6 +84,26 @@ export class AccountWorker {
 
   get isAvailable(): boolean {
     return this._status === "ready" && !this._busy;
+  }
+
+  get waitQueueDepth(): number {
+    return this.waitQueue.length - this.waitQueueHead;
+  }
+
+  get restartCount(): number {
+    return this.automation.restartCount;
+  }
+
+  getSnapshot(): AccountWorkerSnapshot {
+    return {
+      accountId: this.accountId,
+      status: this._status,
+      lastError: this._lastError,
+      isBusy: this._busy,
+      isAvailable: this.isAvailable,
+      waitQueueDepth: this.waitQueueDepth,
+      restartCount: this.restartCount,
+    };
   }
 
   /**
@@ -119,6 +155,7 @@ export class AccountWorker {
       return false;
     }
     this._busy = true;
+    this._status = "busy";
     return true;
   }
 
@@ -127,6 +164,9 @@ export class AccountWorker {
    */
   private release(): void {
     this._busy = false;
+    if (this._status === "busy") {
+      this._status = "ready";
+    }
 
     // Notify the first waiter in queue (FIFO)
     this.dequeueWaiter()?.resolve();

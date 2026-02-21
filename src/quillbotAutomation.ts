@@ -66,6 +66,25 @@ export interface ParaphraseResult {
   secondMode: string;
 }
 
+export type AutomationErrorCode =
+  | "E_TIMEOUT"
+  | "E_THROTTLED"
+  | "E_SELECTOR_MISS"
+  | "E_MODAL_BLOCK"
+  | "E_BROWSER_CRASH"
+  | "E_RESTART_FAILED"
+  | "E_UNKNOWN";
+
+export class AutomationError extends Error {
+  constructor(
+    public readonly code: AutomationErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AutomationError";
+  }
+}
+
 export interface QuillBotAutomationOptions {
   email: string;
   password: string;
@@ -87,6 +106,8 @@ export class QuillBotAutomation {
   private cookieConsentHandled = false;
   private browserFailed = false;
   private isRestarting = false;
+  private autoRestartCount = 0;
+  private readonly criticalFailureCountByContext = new Map<string, number>();
 
   public readonly accountId: string;
 
@@ -100,6 +121,10 @@ export class QuillBotAutomation {
       options.accountId,
       "cookies.json",
     );
+  }
+
+  get restartCount(): number {
+    return this.autoRestartCount;
   }
 
   async init(): Promise<void> {
@@ -125,6 +150,7 @@ export class QuillBotAutomation {
     this.browserFailed = false;
     this.cookieConsentHandled = false;
     this.isRestarting = false;
+    this.criticalFailureCountByContext.clear();
   }
 
   /**
@@ -267,15 +293,35 @@ export class QuillBotAutomation {
     return run;
   }
 
+  private incrementCriticalFailure(context: string): number {
+    const next = (this.criticalFailureCountByContext.get(context) || 0) + 1;
+    this.criticalFailureCountByContext.set(context, next);
+    return next;
+  }
+
+  private clearCriticalFailure(context: string): void {
+    this.criticalFailureCountByContext.delete(context);
+  }
+
   private async runWithAutoRestart<T>(
     context: string,
     operation: () => Promise<T>,
   ): Promise<T> {
     try {
-      return await operation();
+      const result = await operation();
+      this.clearCriticalFailure(context);
+      return result;
     } catch (error) {
       if (!this.isCriticalError(error)) {
         throw error;
+      }
+
+      const criticalCount = this.incrementCriticalFailure(context);
+      if (criticalCount >= 2) {
+        throw new AutomationError(
+          "E_RESTART_FAILED",
+          `[${this.accountId}] Restart circuit opened after repeated critical failures (${criticalCount})`,
+        );
       }
 
       this.log(
@@ -287,8 +333,14 @@ export class QuillBotAutomation {
       this.browserFailed = true;
 
       if (this.isRestarting) {
-        this.log(context, "Restart already in progress, skipping automatic restart");
-        throw error;
+        this.log(
+          context,
+          "Restart already in progress, skipping automatic restart",
+        );
+        throw new AutomationError(
+          "E_RESTART_FAILED",
+          `[${this.accountId}] Restart already in progress while critical failure occurred`,
+        );
       }
 
       this.log(context, "Attempting automatic browser restart...");
@@ -297,11 +349,23 @@ export class QuillBotAutomation {
       try {
         await this.dispose();
         await this.init();
+        this.autoRestartCount += 1;
         this.log(context, "Browser restarted successfully, retrying request...");
         const result = await operation();
+        this.clearCriticalFailure(context);
         this.log(context, "Retry successful after browser restart");
         return result;
       } catch (retryError) {
+        if (this.isCriticalError(retryError)) {
+          const retryCriticalCount = this.incrementCriticalFailure(context);
+          if (retryCriticalCount >= 2) {
+            throw new AutomationError(
+              "E_RESTART_FAILED",
+              `[${this.accountId}] Retry failed after browser restart and exceeded critical failure cap`,
+            );
+          }
+        }
+
         this.log(
           context,
           `Retry failed after browser restart: ${
@@ -583,26 +647,161 @@ export class QuillBotAutomation {
     return this.page;
   }
 
+  private async ensureParaphraserPage(page: Page, context: string): Promise<void> {
+    const currentUrl = page.url();
+    if (currentUrl.includes("/paraphrasing-tool")) {
+      return;
+    }
+
+    this.log(context, "Preflight: navigating to paraphrasing tool");
+    await page.goto(PARAPHRASER_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: this.timeout,
+    });
+  }
+
+  private async ensureInputWritable(page: Page): Promise<void> {
+    const inputRoot = await this.waitForAnySelector(
+      page,
+      SELECTORS.inputArea,
+      this.timeout,
+    );
+
+    const writable = await page.evaluate((root) => {
+      const resolveEditable = (element: Element): HTMLElement | null => {
+        if (
+          element instanceof HTMLInputElement ||
+          element instanceof HTMLTextAreaElement
+        ) {
+          return element;
+        }
+        if (element instanceof HTMLElement && element.isContentEditable) {
+          return element;
+        }
+        const nestedEditable = element.querySelector<HTMLElement>(
+          "[contenteditable='true']",
+        );
+        if (nestedEditable) {
+          return nestedEditable;
+        }
+        const nestedInput = element.querySelector<
+          HTMLInputElement | HTMLTextAreaElement
+        >("textarea, input");
+        return nestedInput ?? null;
+      };
+
+      const editable = resolveEditable(root);
+      if (!editable) {
+        return false;
+      }
+
+      if (
+        editable instanceof HTMLInputElement ||
+        editable instanceof HTMLTextAreaElement
+      ) {
+        return !editable.disabled && !editable.readOnly;
+      }
+
+      return editable.isContentEditable;
+    }, inputRoot);
+
+    if (!writable) {
+      throw new AutomationError(
+        "E_SELECTOR_MISS",
+        `[${this.accountId}] Input area is not writable`,
+      );
+    }
+  }
+
+  private async preflightForMode(
+    page: Page,
+    modeSelectors: string[],
+    context: string,
+  ): Promise<void> {
+    await this.ensureParaphraserPage(page, context);
+    await this.closePremiumModalIfPresent(page);
+    await this.handleCookieConsent(page);
+    await this.ensureMode(page, modeSelectors);
+    await this.ensureInputWritable(page);
+    await this.waitForAnySelector(page, SELECTORS.paraphraseButton, this.timeout);
+  }
+
+  private async softResetForMode(
+    page: Page,
+    modeSelectors: string[],
+    text: string,
+    context: string,
+  ): Promise<void> {
+    this.log(context, "Attempting soft reset");
+    await this.closePremiumModalIfPresent(page);
+    await this.handleCookieConsent(page);
+    await this.ensureMode(page, modeSelectors);
+    await this.clearInputArea(page);
+    await this.fillInputArea(page, text);
+  }
+
+  private async hardResetForMode(
+    page: Page,
+    modeSelectors: string[],
+    text: string,
+    context: string,
+  ): Promise<void> {
+    this.log(context, "Soft reset failed, falling back to hard reset");
+    await page.reload({ waitUntil: "networkidle2" });
+    await this.closePremiumModalIfPresent(page);
+    await this.handleCookieConsent(page);
+    await this.ensureMode(page, modeSelectors);
+    await this.clearInputArea(page);
+    await this.fillInputArea(page, text);
+  }
+
+  private async recoverAfterTriggerFailure(
+    page: Page,
+    modeSelectors: string[],
+    text: string,
+    context: string,
+  ): Promise<void> {
+    try {
+      await this.softResetForMode(page, modeSelectors, text, context);
+      await this.preflightForMode(page, modeSelectors, context);
+      return;
+    } catch (softResetError) {
+      this.log(
+        context,
+        `Soft reset failed: ${
+          softResetError instanceof Error
+            ? softResetError.message
+            : String(softResetError)
+        }`,
+      );
+    }
+
+    await this.hardResetForMode(page, modeSelectors, text, context);
+    await this.preflightForMode(page, modeSelectors, context);
+  }
+
   private async runFirstMode(
     page: Page,
     text: string,
     context: string,
   ): Promise<string> {
+    const modeSelectors = SELECTORS.firstModeTab;
+    await this.preflightForMode(page, modeSelectors, context);
     this.log(context, "Mode 1: ensuring tab active");
-    await this.ensureMode(page, SELECTORS.firstModeTab);
+    await this.ensureMode(page, modeSelectors);
     this.log(context, "Mode 1: filling input");
     await this.fillInputArea(page, text);
     await this.closePremiumModalIfPresent(page);
     await this.handleCookieConsent(page);
     this.log(context, "Mode 1: clicking paraphrase");
 
-    await this.clickParaphraseWithRetry(page, context, "Mode 1", async () => {
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await this.closePremiumModalIfPresent(page);
-      await this.handleCookieConsent(page);
-      await this.ensureMode(page, SELECTORS.firstModeTab);
-      await this.fillInputArea(page, text);
-    });
+    await this.clickParaphraseWithRetry(
+      page,
+      context,
+      "Mode 1",
+      modeSelectors,
+      text,
+    );
 
     return this.captureParaphraseOutput(page, context, "Mode 1");
   }
@@ -612,14 +811,11 @@ export class QuillBotAutomation {
     text: string,
     context: string,
   ): Promise<string> {
-    this.log(context, "Mode 2: Reloading page to ensure fresh state");
-    await page.reload({ ignoreCache: false, waitUntil: "networkidle2" });
-
-    await this.closePremiumModalIfPresent(page);
-    await this.handleCookieConsent(page);
+    const modeSelectors = SELECTORS.secondModeTab;
+    await this.preflightForMode(page, modeSelectors, context);
 
     this.log(context, "Mode 2: switching tab");
-    await this.switchMode(page, SELECTORS.secondModeTab);
+    await this.switchMode(page, modeSelectors);
 
     this.log(context, "Mode 2: filling input");
     await this.fillInputArea(page, text);
@@ -627,13 +823,13 @@ export class QuillBotAutomation {
     await this.delay(500);
     this.log(context, "Mode 2: clicking paraphrase");
 
-    await this.clickParaphraseWithRetry(page, context, "Mode 2", async () => {
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await this.closePremiumModalIfPresent(page);
-      await this.handleCookieConsent(page);
-      await this.switchMode(page, SELECTORS.secondModeTab);
-      await this.fillInputArea(page, text);
-    });
+    await this.clickParaphraseWithRetry(
+      page,
+      context,
+      "Mode 2",
+      modeSelectors,
+      text,
+    );
 
     const output = await this.captureParaphraseOutput(page, context, "Mode 2");
     this.resetPageState(page, context);
@@ -645,8 +841,10 @@ export class QuillBotAutomation {
     text: string,
     context: string,
   ): Promise<string> {
+    const modeSelectors = SELECTORS.standardModeTab;
+    await this.preflightForMode(page, modeSelectors, context);
     this.log(context, "Standard mode: ensuring tab active");
-    await this.ensureMode(page, SELECTORS.standardModeTab);
+    await this.ensureMode(page, modeSelectors);
     this.log(context, "Standard mode: filling input");
     await this.fillInputArea(page, text);
     await this.closePremiumModalIfPresent(page);
@@ -657,13 +855,8 @@ export class QuillBotAutomation {
       page,
       context,
       "Standard mode",
-      async () => {
-        await page.reload({ waitUntil: "domcontentloaded" });
-        await this.closePremiumModalIfPresent(page);
-        await this.handleCookieConsent(page);
-        await this.ensureMode(page, SELECTORS.standardModeTab);
-        await this.fillInputArea(page, text);
-      },
+      modeSelectors,
+      text,
     );
 
     const output = await this.captureParaphraseOutput(
@@ -699,7 +892,8 @@ export class QuillBotAutomation {
     page: Page,
     context: string,
     modeLabel: string,
-    restoreAfterFirstFailure: () => Promise<void>,
+    modeSelectors: string[],
+    text: string,
   ): Promise<void> {
     for (let attempt = 0; attempt < MAX_PARAPHRASE_CLICK_ATTEMPTS; attempt++) {
       await this.randomDelay(100, 400);
@@ -717,8 +911,13 @@ export class QuillBotAutomation {
       );
 
       if (attempt === 0) {
-        this.log(context, `${modeLabel}: Refreshing page before retry...`);
-        await restoreAfterFirstFailure();
+        this.log(context, `${modeLabel}: running recovery flow before retry...`);
+        await this.recoverAfterTriggerFailure(
+          page,
+          modeSelectors,
+          text,
+          context,
+        );
         await this.delay(300);
       }
     }
@@ -1209,9 +1408,13 @@ export class QuillBotAutomation {
       console.error("Failed to capture debug info on selector failure:", e);
     }
 
-    throw (
-      lastError ??
-      new Error(`Unable to find selectors: ${selectors.join(", ")}`)
+    const baseMessage =
+      lastError instanceof Error
+        ? lastError.message
+        : String(lastError ?? "unknown selector error");
+    throw new AutomationError(
+      "E_SELECTOR_MISS",
+      `Unable to find selectors: ${selectors.join(", ")} (${baseMessage})`,
     );
   }
 
