@@ -967,19 +967,103 @@ export class QuillBotAutomation {
     return output;
   }
 
-  private async waitForParaphraseToStart(page: Page): Promise<boolean> {
+  private async readOutputSignature(page: Page): Promise<string> {
+    return page.evaluate((outputSelectors) => {
+      const normalize = (value: string): string =>
+        value.replace(/\s+/g, " ").trim();
+
+      const isVisible = (el: Element | null): el is HTMLElement => {
+        if (!(el instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      for (const selector of outputSelectors) {
+        const candidate = document.querySelector(selector);
+        if (!isVisible(candidate)) continue;
+        const text = normalize(candidate.innerText || candidate.textContent || "");
+        if (text) {
+          return text.slice(0, 800);
+        }
+      }
+
+      return "";
+    }, [...OUTPUT_SELECTORS]);
+  }
+
+  private async waitForParaphraseToStart(
+    page: Page,
+    baselineOutputSignature: string,
+  ): Promise<boolean> {
     try {
       await page.waitForFunction(
-        (loadingSelectors, copySelectors) => {
+        (
+          loadingSelectors,
+          paraphraseButtonSelectors,
+          outputSelectors,
+          baselineOutput,
+        ) => {
+          const normalize = (value: string): string =>
+            value.replace(/\s+/g, " ").trim();
+
+          const isVisible = (el: Element | null): el is HTMLElement => {
+            if (!(el instanceof HTMLElement)) return false;
+            const style = window.getComputedStyle(el);
+            if (style.display === "none" || style.visibility === "hidden") {
+              return false;
+            }
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          };
+
+          const isParaphraseButtonBusy = (): boolean => {
+            for (const selector of paraphraseButtonSelectors) {
+              const button = document.querySelector(selector);
+              if (!(button instanceof HTMLElement)) continue;
+              const ariaBusy = button.getAttribute("aria-busy");
+              const ariaDisabled = button.getAttribute("aria-disabled");
+              const className = (button.className || "").toLowerCase();
+              if (
+                button.hasAttribute("disabled") ||
+                ariaBusy === "true" ||
+                ariaDisabled === "true" ||
+                className.includes("loading")
+              ) {
+                return true;
+              }
+            }
+            return false;
+          };
+
+          const currentOutputSignature = (() => {
+            for (const selector of outputSelectors) {
+              const candidate = document.querySelector(selector);
+              if (!isVisible(candidate)) continue;
+              const text = normalize(candidate.innerText || candidate.textContent || "");
+              if (text) {
+                return text.slice(0, 800);
+              }
+            }
+            return "";
+          })();
+
           const isLoading = loadingSelectors.some((s) =>
             document.querySelector(s),
           );
-          const isDone = copySelectors.some((s) => document.querySelector(s));
-          return isLoading || isDone;
+          const outputChanged =
+            !!currentOutputSignature &&
+            currentOutputSignature !== baselineOutput;
+          return isLoading || isParaphraseButtonBusy() || outputChanged;
         },
         { timeout: PARAPHRASE_START_TIMEOUT_MS },
-        SELECTORS.loadingIndicator,
-        SELECTORS.copyButton,
+        [...SELECTORS.loadingIndicator],
+        [...SELECTORS.paraphraseButton],
+        [...OUTPUT_SELECTORS],
+        baselineOutputSignature,
       );
       return true;
     } catch {
@@ -995,10 +1079,11 @@ export class QuillBotAutomation {
     text: string,
   ): Promise<void> {
     for (let attempt = 0; attempt < MAX_PARAPHRASE_CLICK_ATTEMPTS; attempt++) {
+      const baselineOutputSignature = await this.readOutputSignature(page);
       await this.randomDelay(100, 400);
       await this.triggerParaphrase(page);
 
-      if (await this.waitForParaphraseToStart(page)) {
+      if (await this.waitForParaphraseToStart(page, baselineOutputSignature)) {
         return;
       }
 
@@ -1054,6 +1139,7 @@ export class QuillBotAutomation {
   }
 
   private async ensureMode(page: Page, selectors: string[]): Promise<void> {
+    const labels = this.inferModeLabels(selectors);
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -1063,6 +1149,9 @@ export class QuillBotAutomation {
           this.timeout,
         );
         await tab.click({ delay: 5 });
+        if (labels.length > 0) {
+          await this.ensureModeLabelActive(page, labels);
+        }
         return;
       } catch (error) {
         lastError = error;
@@ -1074,7 +1163,6 @@ export class QuillBotAutomation {
       }
     }
 
-    const labels = this.inferModeLabels(selectors);
     if (labels.length > 0) {
       this.log(
         "mode",
@@ -1082,6 +1170,7 @@ export class QuillBotAutomation {
       );
       try {
         await this.selectModeByLabel(page, labels, 8000);
+        await this.ensureModeLabelActive(page, labels);
         return;
       } catch (labelError) {
         lastError = labelError;
@@ -1175,6 +1264,41 @@ export class QuillBotAutomation {
       "E_SELECTOR_MISS",
       `Failed to switch mode by labels within ${timeoutMs}ms (${labels.join(", ")})`,
     );
+  }
+
+  private async ensureModeLabelActive(
+    page: Page,
+    labels: string[],
+  ): Promise<void> {
+    const expected = labels.map((label) => label.toLowerCase());
+
+    const isActive = await page.evaluate((targetLabels) => {
+      const normalize = (value: string): string =>
+        value.toLowerCase().replace(/\s+/g, " ").trim();
+
+      const textFor = (el: Element): string =>
+        normalize(
+          `${el.getAttribute("aria-label") || ""} ${el.getAttribute("data-testid") || ""} ${el.textContent || ""}`,
+        );
+
+      const candidates = Array.from(
+        document.querySelectorAll(
+          "[id^='Paraphraser-mode-tab-'][aria-selected='true'], [role='tab'][aria-selected='true'], [aria-selected='true'][role='button']",
+        ),
+      );
+
+      return candidates.some((el) => {
+        const text = textFor(el);
+        return targetLabels.some((label) => text.includes(label));
+      });
+    }, expected);
+
+    if (!isActive) {
+      throw new AutomationError(
+        "E_SELECTOR_MISS",
+        `Mode activation check failed for labels: ${labels.join(", ")}`,
+      );
+    }
   }
 
   private async switchMode(page: Page, selectors: string[]): Promise<void> {
