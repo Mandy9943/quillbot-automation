@@ -8,7 +8,7 @@ Multi-account QuillBot browser-automation service (3 accounts, 3 browsers) with 
 - Supports:
   - `dual` mode (Simple -> Shorten)
   - `standard` mode
-  - `ludicrous` mode (single-pass fastest profile)
+  - `ludicrous` mode (Simple -> Shorten with faster scheduler profile)
 - Keeps QuillBot UI action flow intact (same selectors/button order), while improving reliability and throughput around scheduling/retries/recovery.
 
 ## Key Reliability/Speed Features

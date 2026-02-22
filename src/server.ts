@@ -237,7 +237,8 @@ app.get(
  *   acc2?: string,
  *   acc3?: string,
  *   mode?: "dual" | "standard" | "ludicrous"
- *   // "dual" = Simple→Shorten (default), "standard"/"ludicrous" = single-pass mode
+ *   // "dual" = Simple→Shorten (default), "standard" = Standard mode only
+ *   // "ludicrous" = Simple→Shorten with faster scheduler profile
  * }
  * At least one account text must be provided.
  *
@@ -248,7 +249,8 @@ app.get(
  * }
  *
  * For mode="dual": Returns firstMode and secondMode
- * For mode="standard" or mode="ludicrous": Returns result
+ * For mode="standard": Returns result
+ * For mode="ludicrous": Returns result (second pass) and may also include firstMode/secondMode
  */
 app.post("/paraphrase-batch", async (req: Request, res: Response) => {
   if (!pool.isReady) {

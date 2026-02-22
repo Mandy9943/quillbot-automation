@@ -171,7 +171,7 @@ COOLDOWN_PROFILE=balanced
 | ---------- | ------------------ | ------ | ------- | ------------------------- |
 | `dual`     | Simple → Shorten   | 2      | ~15-16s | `firstMode`, `secondMode` |
 | `standard` | Standard mode only | 1      | ~5-6s   | `result`                  |
-| `ludicrous` | Single-pass fastest profile | 1 | ~3-5s | `result` |
+| `ludicrous` | Simple → Shorten (faster scheduler profile) | 2 | ~12-16s | `result` (plus optional `firstMode`/`secondMode`) |
 
 ---
 

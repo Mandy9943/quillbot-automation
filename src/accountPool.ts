@@ -30,7 +30,7 @@ const JITTER_MAX_MS = 300;
 const MODE_TARGET_SECONDS: Record<ParaphraseMode, number> = {
   dual: 18,
   standard: 9,
-  ludicrous: 7,
+  ludicrous: 16,
 };
 
 const MODE_BUDGET_BOUNDS: Record<
@@ -39,13 +39,13 @@ const MODE_BUDGET_BOUNDS: Record<
 > = {
   dual: { min: 280, max: 760, initial: 520 },
   standard: { min: 500, max: 1400, initial: 950 },
-  ludicrous: { min: 700, max: 2000, initial: 1300 },
+  ludicrous: { min: 300, max: 900, initial: 600 },
 };
 
 const MODE_BASE_COOLDOWN_MS: Record<ParaphraseMode, number> = {
   dual: 1200,
   standard: 600,
-  ludicrous: 250,
+  ludicrous: 900,
 };
 
 const HEALTH_PENALTY_MS: Record<SchedulerHealthState, number> = {
@@ -492,7 +492,7 @@ export class AccountPool {
   }
 
   private shouldUseTimeout(words: number, mode: ParaphraseMode): boolean {
-    return mode === "dual" && words <= SMALL_TEXT_MAX_WORDS;
+    return mode !== "standard" && words <= SMALL_TEXT_MAX_WORDS;
   }
 
   private estimateDurationMs(
@@ -796,7 +796,7 @@ export class AccountPool {
     requestId: string,
     useTimeout: boolean,
   ): Promise<WorkerOutput> {
-    if (mode !== "dual") {
+    if (mode === "standard") {
       return worker.paraphraseStandardMode(text, requestId).then((result) => ({
         result,
       }));
@@ -806,10 +806,20 @@ export class AccountPool {
       ? worker.paraphraseWithTimeout(text, SMALL_TEXT_TIMEOUT_MS, requestId)
       : worker.paraphrase(text, requestId);
 
-    return run.then((result) => ({
-      firstMode: result.firstMode,
-      secondMode: result.secondMode,
-    }));
+    return run.then((result) =>
+      mode === "ludicrous"
+        ? {
+            // Ludicrous now uses dual-pass (Simple -> Shorten) but keeps `result`
+            // for compatibility with existing single-pass add-in call sites.
+            result: result.secondMode,
+            firstMode: result.firstMode,
+            secondMode: result.secondMode,
+          }
+        : {
+            firstMode: result.firstMode,
+            secondMode: result.secondMode,
+          },
+    );
   }
 
   private reservePendingLoad(
