@@ -995,9 +995,37 @@ export class QuillBotAutomation {
     }, [...OUTPUT_SELECTORS]);
   }
 
+  private async readParaphraseButtonDisabledState(
+    page: Page,
+  ): Promise<boolean | null> {
+    return page.evaluate((paraphraseButtonSelectors) => {
+      const isVisible = (el: Element | null): el is HTMLElement => {
+        if (!(el instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      for (const selector of paraphraseButtonSelectors) {
+        const button = document.querySelector(selector);
+        if (!isVisible(button)) continue;
+        return (
+          button.hasAttribute("disabled") ||
+          button.getAttribute("aria-disabled") === "true"
+        );
+      }
+
+      return null;
+    }, [...SELECTORS.paraphraseButton]);
+  }
+
   private async waitForParaphraseToStart(
     page: Page,
     baselineOutputSignature: string,
+    baselineButtonDisabled: boolean | null,
   ): Promise<boolean> {
     try {
       await page.waitForFunction(
@@ -1006,6 +1034,7 @@ export class QuillBotAutomation {
           paraphraseButtonSelectors,
           outputSelectors,
           baselineOutput,
+          baselineDisabled,
         ) => {
           const normalize = (value: string): string =>
             value.replace(/\s+/g, " ").trim();
@@ -1020,17 +1049,20 @@ export class QuillBotAutomation {
             return rect.width > 0 && rect.height > 0;
           };
 
-          const isParaphraseButtonBusy = (): boolean => {
+          const didParaphraseButtonEnterBusyState = (): boolean => {
             for (const selector of paraphraseButtonSelectors) {
               const button = document.querySelector(selector);
               if (!(button instanceof HTMLElement)) continue;
               const ariaBusy = button.getAttribute("aria-busy");
               const ariaDisabled = button.getAttribute("aria-disabled");
               const className = (button.className || "").toLowerCase();
+              const isDisabled =
+                button.hasAttribute("disabled") || ariaDisabled === "true";
+              const disabledTransitionedToTrue =
+                baselineDisabled === false && isDisabled;
               if (
-                button.hasAttribute("disabled") ||
                 ariaBusy === "true" ||
-                ariaDisabled === "true" ||
+                disabledTransitionedToTrue ||
                 className.includes("loading")
               ) {
                 return true;
@@ -1057,13 +1089,14 @@ export class QuillBotAutomation {
           const outputChanged =
             !!currentOutputSignature &&
             currentOutputSignature !== baselineOutput;
-          return isLoading || isParaphraseButtonBusy() || outputChanged;
+          return isLoading || didParaphraseButtonEnterBusyState() || outputChanged;
         },
         { timeout: PARAPHRASE_START_TIMEOUT_MS },
         [...SELECTORS.loadingIndicator],
         [...SELECTORS.paraphraseButton],
         [...OUTPUT_SELECTORS],
         baselineOutputSignature,
+        baselineButtonDisabled,
       );
       return true;
     } catch {
@@ -1080,10 +1113,18 @@ export class QuillBotAutomation {
   ): Promise<void> {
     for (let attempt = 0; attempt < MAX_PARAPHRASE_CLICK_ATTEMPTS; attempt++) {
       const baselineOutputSignature = await this.readOutputSignature(page);
+      const baselineButtonDisabled =
+        await this.readParaphraseButtonDisabledState(page);
       await this.randomDelay(100, 400);
       await this.triggerParaphrase(page);
 
-      if (await this.waitForParaphraseToStart(page, baselineOutputSignature)) {
+      if (
+        await this.waitForParaphraseToStart(
+          page,
+          baselineOutputSignature,
+          baselineButtonDisabled,
+        )
+      ) {
         return;
       }
 
