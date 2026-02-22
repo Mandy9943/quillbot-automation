@@ -1073,7 +1073,108 @@ export class QuillBotAutomation {
         await this.delay(100);
       }
     }
+
+    const labels = this.inferModeLabels(selectors);
+    if (labels.length > 0) {
+      this.log(
+        "mode",
+        `Selector-based mode switch failed; trying label-based mode selection (${labels.join(", ")})`,
+      );
+      try {
+        await this.selectModeByLabel(page, labels, 8000);
+        return;
+      } catch (labelError) {
+        lastError = labelError;
+      }
+    }
+
     throw lastError ?? new Error("Failed to switch mode tab");
+  }
+
+  private inferModeLabels(selectors: string[]): string[] {
+    if (selectors === SELECTORS.firstModeTab) {
+      return ["simple"];
+    }
+    if (selectors === SELECTORS.secondModeTab) {
+      return ["shorten"];
+    }
+    if (selectors === SELECTORS.standardModeTab) {
+      return ["standard"];
+    }
+    return [];
+  }
+
+  private async selectModeByLabel(
+    page: Page,
+    labels: string[],
+    timeoutMs: number,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    const normalizedLabels = labels.map((label) => label.toLowerCase());
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const action = await page.evaluate((targetLabels) => {
+        const normalize = (value: string): string =>
+          value.toLowerCase().replace(/\s+/g, " ").trim();
+
+        const isVisible = (el: Element): boolean => {
+          if (!(el instanceof HTMLElement)) return false;
+          const style = window.getComputedStyle(el);
+          if (style.display === "none" || style.visibility === "hidden") return false;
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+
+        const textFor = (el: Element): string =>
+          normalize(
+            `${el.getAttribute("aria-label") || ""} ${el.getAttribute("data-testid") || ""} ${el.textContent || ""}`,
+          );
+
+        const matchesLabel = (el: Element): boolean => {
+          const hay = textFor(el);
+          return targetLabels.some(
+            (label) => hay === label || hay.includes(` ${label} `) || hay.startsWith(`${label} `) || hay.endsWith(` ${label}`) || hay.includes(label),
+          );
+        };
+
+        const candidates = Array.from(
+          document.querySelectorAll(
+            "[id^='Paraphraser-mode-tab-'], [role='tab'], [role='menuitem'], button",
+          ),
+        );
+
+        const target = candidates.find((el) => isVisible(el) && matchesLabel(el));
+        if (target && target instanceof HTMLElement) {
+          target.click();
+          return "clicked-target";
+        }
+
+        const more = candidates.find((el) => {
+          if (!isVisible(el)) return false;
+          const text = textFor(el);
+          return text === "more" || text.includes(" more");
+        });
+
+        if (more && more instanceof HTMLElement) {
+          more.click();
+          return "clicked-more";
+        }
+
+        return "none";
+      }, normalizedLabels);
+
+      if (action === "clicked-target") {
+        await this.delay(120);
+        return;
+      }
+
+      await this.delay(action === "clicked-more" ? 220 : 140);
+    }
+
+    throw new AutomationError(
+      "E_SELECTOR_MISS",
+      `Failed to switch mode by labels within ${timeoutMs}ms (${labels.join(", ")})`,
+    );
   }
 
   private async switchMode(page: Page, selectors: string[]): Promise<void> {
