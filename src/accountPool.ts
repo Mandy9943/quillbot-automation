@@ -478,6 +478,7 @@ export class AccountPool {
     if (lowered.includes("tripped until")) return false;
     if (lowered.includes("worker is initializing")) return false;
     if (lowered.includes("worker is in error state")) return false;
+    if (lowered.includes("worker is busy")) return false;
     if (lowered.includes("waitforavailable timed out")) return false;
     return true;
   }

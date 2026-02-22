@@ -755,19 +755,34 @@ export class QuillBotAutomation {
     page: Page,
     timeout: number,
   ): Promise<ElementHandle<Element> | null> {
-    try {
-      return await this.waitForAnySelector(page, SELECTORS.paraphraseButton, timeout);
-    } catch {
-      // Continue with semantic fallback below.
+    const visibleButton = await this.findVisibleElementBySelectors(
+      page,
+      SELECTORS.paraphraseButton,
+      timeout,
+    );
+    if (visibleButton) {
+      return visibleButton;
     }
 
+    // Continue with semantic fallback below.
     try {
       await page.waitForFunction(
         () => {
+          const isVisible = (el: Element): boolean => {
+            if (!(el instanceof HTMLElement)) return false;
+            const style = window.getComputedStyle(el);
+            if (style.display === "none" || style.visibility === "hidden") {
+              return false;
+            }
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          };
+
           const candidates = Array.from(
             document.querySelectorAll("button, [role='button']"),
           );
           return candidates.some((el) => {
+            if (!isVisible(el)) return false;
             const text = (el.textContent || "").toLowerCase();
             const aria = (el.getAttribute("aria-label") || "").toLowerCase();
             const testId = (el.getAttribute("data-testid") || "").toLowerCase();
@@ -788,10 +803,22 @@ export class QuillBotAutomation {
       );
 
       const handle = await page.evaluateHandle(() => {
+        const isVisible = (el: Element): boolean => {
+          if (!(el instanceof HTMLElement)) return false;
+          const style = window.getComputedStyle(el);
+          if (style.display === "none" || style.visibility === "hidden") {
+            return false;
+          }
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+
         const candidates = Array.from(
           document.querySelectorAll("button, [role='button']"),
         );
         for (const el of candidates) {
+          if (!isVisible(el)) continue;
+
           const text = (el.textContent || "").toLowerCase();
           const aria = (el.getAttribute("aria-label") || "").toLowerCase();
           const testId = (el.getAttribute("data-testid") || "").toLowerCase();
@@ -823,6 +850,69 @@ export class QuillBotAutomation {
     } catch {
       return null;
     }
+  }
+
+  private async findVisibleElementBySelectors(
+    page: Page,
+    selectors: string[],
+    timeout: number,
+  ): Promise<ElementHandle<Element> | null> {
+    try {
+      await page.waitForFunction(
+        (selectorList) => {
+          const isVisible = (el: Element | null): el is HTMLElement => {
+            if (!(el instanceof HTMLElement)) return false;
+            const style = window.getComputedStyle(el);
+            if (style.display === "none" || style.visibility === "hidden") {
+              return false;
+            }
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          };
+
+          return selectorList.some((selector) => {
+            const candidates = Array.from(document.querySelectorAll(selector));
+            return candidates.some((candidate) => isVisible(candidate));
+          });
+        },
+        { timeout },
+        selectors,
+      );
+    } catch {
+      return null;
+    }
+
+    for (const selector of selectors) {
+      const handles = await page.$$(selector);
+      for (const handle of handles) {
+        let visible = false;
+        try {
+          visible = await handle.evaluate((el) => {
+            if (!(el instanceof HTMLElement)) return false;
+            const style = window.getComputedStyle(el);
+            if (
+              style.display === "none" ||
+              style.visibility === "hidden" ||
+              style.pointerEvents === "none"
+            ) {
+              return false;
+            }
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          });
+        } catch {
+          visible = false;
+        }
+
+        if (visible) {
+          return handle;
+        }
+
+        await handle.dispose();
+      }
+    }
+
+    return null;
   }
 
   private async softResetForMode(
@@ -1147,7 +1237,8 @@ export class QuillBotAutomation {
       }
     }
 
-    throw new Error(
+    throw new AutomationError(
+      "E_SELECTOR_MISS",
       "Critical: Click failed after 2 attempts - paraphrase button not responding",
     );
   }
@@ -1404,6 +1495,15 @@ export class QuillBotAutomation {
       `Paraphrase button found: disabled=${buttonState.disabled}, visible=${buttonState.visible}`,
     );
 
+    if (!buttonState.visible) {
+      console.log(
+        "Paraphrase button resolved to non-visible element; falling back to keyboard shortcut",
+      );
+      await this.pressParaphraseShortcut(page);
+      await button.dispose();
+      return;
+    }
+
     if (buttonState.disabled) {
       console.log("Button is disabled! Attempting to wake up input...");
       // Try to trigger input events by typing a space and backspace
@@ -1448,8 +1548,10 @@ export class QuillBotAutomation {
         return;
       }
 
-      console.log("Paraphrase button has no bounding box; using JS click");
-      await page.evaluate((el) => (el as HTMLElement).click(), button);
+      console.log(
+        "Paraphrase button has no bounding box; falling back to keyboard shortcut",
+      );
+      await this.pressParaphraseShortcut(page);
     } catch (clickError) {
       console.log(
         `Click on paraphrase button failed; falling back to keyboard shortcut: ${
