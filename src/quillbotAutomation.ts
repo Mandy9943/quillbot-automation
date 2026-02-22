@@ -16,7 +16,8 @@ const QUILLBOT_ORIGIN = "https://quillbot.com";
 const QUILLBOT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 const MAX_PARAPHRASE_CLICK_ATTEMPTS = 2;
-const PARAPHRASE_START_TIMEOUT_MS = 10000;
+const PARAPHRASE_START_TIMEOUT_MS = 15000;
+const PARAPHRASE_SHORTCUT_FALLBACK_TIMEOUT_MS = 5000;
 const PARAPHRASE_BUTTON_DISCOVERY_TIMEOUT_MS = 4000;
 const OUTPUT_SELECTORS = [
   '#paraphraser-output-box [data-testid="pphr/output_box/contenteditable"]',
@@ -1116,6 +1117,7 @@ export class QuillBotAutomation {
     page: Page,
     baselineOutputSignature: string,
     baselineButtonDisabled: boolean | null,
+    timeoutMs: number = PARAPHRASE_START_TIMEOUT_MS,
   ): Promise<boolean> {
     try {
       await page.waitForFunction(
@@ -1181,7 +1183,7 @@ export class QuillBotAutomation {
             currentOutputSignature !== baselineOutput;
           return isLoading || didParaphraseButtonEnterBusyState() || outputChanged;
         },
-        { timeout: PARAPHRASE_START_TIMEOUT_MS },
+        { timeout: timeoutMs },
         [...SELECTORS.loadingIndicator],
         [...SELECTORS.paraphraseButton],
         [...OUTPUT_SELECTORS],
@@ -1213,6 +1215,24 @@ export class QuillBotAutomation {
           page,
           baselineOutputSignature,
           baselineButtonDisabled,
+          PARAPHRASE_START_TIMEOUT_MS,
+        )
+      ) {
+        return;
+      }
+
+      this.log(
+        context,
+        `${modeLabel}: primary trigger did not start; trying keyboard fallback`,
+      );
+      await this.pressParaphraseShortcut(page);
+
+      if (
+        await this.waitForParaphraseToStart(
+          page,
+          baselineOutputSignature,
+          baselineButtonDisabled,
+          PARAPHRASE_SHORTCUT_FALLBACK_TIMEOUT_MS,
         )
       ) {
         return;
@@ -1522,43 +1542,41 @@ export class QuillBotAutomation {
     await button.evaluate((el) => el.scrollIntoView({ block: "center" }));
     await this.delay(100); // Reduced from 500ms
 
-    // Try mouse click (most reliable for avoiding detection/overlays)
+    // Fire a single click action. Avoid double-clicking (mouse + forced JS)
+    // because QuillBot can treat it as a toggle and cancel the in-flight run.
     try {
-      const box = await button.boundingBox();
-      if (box) {
-        const x = box.x + box.width / 2;
-        const y = box.y + box.height / 2;
-
-        await page.mouse.move(x, y);
-        await this.delay(10);
-        await page.mouse.down();
-        await this.delay(10);
-        await page.mouse.up();
-
-        // Fallback: JS click dispatch (React sometimes needs this)
-        await this.delay(50);
-        await page.evaluate((el) => {
-          const event = new MouseEvent("click", {
-            view: window,
-            bubbles: true,
-            cancelable: true,
-          });
-          el.dispatchEvent(event);
-        }, button);
-        return;
-      }
-
-      console.log(
-        "Paraphrase button has no bounding box; falling back to keyboard shortcut",
-      );
-      await this.pressParaphraseShortcut(page);
+      await button.click({ delay: 10 });
     } catch (clickError) {
       console.log(
-        `Click on paraphrase button failed; falling back to keyboard shortcut: ${
+        `Element click failed, trying JS click: ${
           clickError instanceof Error ? clickError.message : String(clickError)
         }`,
       );
-      await this.pressParaphraseShortcut(page);
+      try {
+        await page.evaluate((el) => {
+          const target = el as HTMLElement;
+          target.dispatchEvent(
+            new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
+          );
+          target.dispatchEvent(
+            new PointerEvent("pointerup", { bubbles: true, cancelable: true }),
+          );
+          target.dispatchEvent(
+            new MouseEvent("click", {
+              view: window,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        }, button);
+      } catch (jsError) {
+        console.log(
+          `JS click failed; falling back to keyboard shortcut: ${
+            jsError instanceof Error ? jsError.message : String(jsError)
+          }`,
+        );
+        await this.pressParaphraseShortcut(page);
+      }
     } finally {
       try {
         await button.dispose();
